@@ -3,12 +3,20 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 name = "pypi"
 
+[scripts]
+test = "pytest"
+testcov = "sh -c 'coverage run -m py.test && coverage report'"
+lint = "flake8"
+
 [packages]
 ryu = "*"
 pymongo = "*"
+"e1839a8" = {path = ".", editable = true}
 
 [dev-packages]
 pytest = "*"
+flake8 = "*"
+coverage = "*"
 
 [requires]
 python_version = "3.6"
