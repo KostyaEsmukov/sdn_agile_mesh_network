@@ -1,7 +1,8 @@
 import random
 import threading
 from abc import ABCMeta, abstractmethod
-from typings import Iterable
+from collections import namedtuple
+from typing import Iterable, List
 
 from pymongo import MongoClient
 
@@ -12,6 +13,7 @@ __all__ = (
     'TopologyDatabase',
 )
 
+# TODO maybe move to common.models?
 SwitchEntity = namedtuple('SwitchEntity', [
     'hostname',
     'is_relay',
@@ -98,4 +100,3 @@ class TopologyDatabase:
         if not switches:
             raise IndexError()
         return switches
-

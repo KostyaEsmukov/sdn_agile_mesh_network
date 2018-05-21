@@ -3,7 +3,6 @@
 
 class OpenvpnManager:
     def __init__(self):
-        # TODO setup configs, certs
         pass
 
     async def start_tunnel(self, **kwargs):

@@ -7,7 +7,12 @@ from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
 from ryu.lib.packet import ether_types
 
-from topology_database import TopologyDatabase, SwitchEntity
+from agile_mesh_network.ryu.topology_database import (
+    TopologyDatabase, SwitchEntity
+)
+
+
+# TODO setup bridge
 
 class SwitchApp(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_4.OFP_VERSION]
@@ -36,6 +41,9 @@ class SwitchApp(app_manager.RyuApp):
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
+
+        # TODO add ovpn tap to the bridge
+        # TODO add flow via tap
 
     def add_flow(self, datapath, priority, match, actions):
         ofproto = datapath.ofproto

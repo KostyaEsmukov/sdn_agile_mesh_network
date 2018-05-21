@@ -4,6 +4,8 @@ from abc import ABCMeta
 from typing import Any, Optional
 from logging import getLogger
 
+from .reader import NewlineReader
+
 logger = getLogger(__name__)
 
 
@@ -62,6 +64,7 @@ class RpcSession:
     def close(self):
         for fut in self.msg_id_to_future.values():
             fut.set_exception(OSError('connection closed'))
+        self.msg_id_to_future.clean()
         self.transport.close()
 
     def _process_message(self, line):
@@ -85,7 +88,7 @@ class RpcProtocol(asyncio.Protocol):
         self.session = None
         self.sessions = sessions
         self.command_cb = command_cb
-        self.buf = b''
+        self.newline_reader = NewlineReader()
 
     def connection_made(self, transport):
         self.transport = transport
@@ -93,13 +96,9 @@ class RpcProtocol(asyncio.Protocol):
         self.sessions.add(self.session)
 
     def data_received(self, data):
-        logger.info('recv data, %s', data)
-        self.buf += data
-        while True:
-            line_rest = self.buf.split(b'\n', 1)
-            if len(line_rest) != 2:
-                break
-            line, self.buf = line_rest
+        logger.debug('recv data, %s', data)
+        self.newline_reader.feed_data(data)
+        for line in self.newline_reader:
             msg = self.session._process_message(line)
             if msg:
                 (asyncio.ensure_future(self.command_cb(self.session, msg))
@@ -111,7 +110,7 @@ class RpcProtocol(asyncio.Protocol):
 
     def command_future_callback(self, fut):
         if fut.done() and fut.exception():
-            logger.error('LocalControlChannel: error during command '
+            logger.error('RPC: error during command '
                          'processing.', fut.exception())
         self.sessions.discard(self.session)
         self.session.close()
@@ -141,11 +140,10 @@ class RpcUnixClient:
         self.unix_sock_path = unix_sock_path
         self.command_cb = command_cb
         self.loop = loop
-        self.sessions = set()
 
     async def start(self):
         transport, protocol = await self.loop.create_unix_connection(
-            lambda: RpcProtocol(self.sessions, self.command_cb),
+            lambda: RpcProtocol(set(), self.command_cb),
             self.unix_sock_path)
         self.session = protocol.session
 
