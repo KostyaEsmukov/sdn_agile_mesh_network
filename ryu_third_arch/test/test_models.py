@@ -1,3 +1,4 @@
+import json
 from unittest import TestCase
 
 from agile_mesh_network.common.models import (
@@ -44,6 +45,7 @@ class ModelsTestCases(TestCase):
 
         data = mod.asdict()
         self.assertDictEqual(data, TUNNEL_DATA)
+        json.dumps(data)  # must be serializable
 
     def test_layers(self):
         mod = LayersDescriptionModel(**LAYERS_DESCRIPTION_DATA)
@@ -54,11 +56,12 @@ class ModelsTestCases(TestCase):
 
         data = mod.asdict()
         self.assertDictEqual(data, LAYERS_DESCRIPTION_DATA)
+        json.dumps(data)  # must be serializable
 
     def test_negotiation(self):
         mod = NegotiationIntentionModel(**NEGOTIATION_INTENTION_DATA)
         nonce = mod.nonce
-        self.assertEqual(10, len(nonce))
+        self.assertEqual(16, len(nonce))
 
         self.assertEqual(mod.src_mac, NEGOTIATION_INTENTION_DATA["src_mac"])
         with self.assertRaises(TypeError):
@@ -67,3 +70,4 @@ class ModelsTestCases(TestCase):
         data = mod.asdict()
         self.assertDictEqual(data, {**NEGOTIATION_INTENTION_DATA,
                                     "nonce": nonce})
+        json.dumps(data)  # must be serializable

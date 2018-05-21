@@ -1,5 +1,12 @@
-from abc import ABCMeta
+import asyncio
+import json
+from abc import ABCMeta, abstractmethod
+from typing import Awaitable, Tuple
 
+from agile_mesh_network.common.reader import EncryptedNewlineReader
+from agile_mesh_network.common.models import (
+    LayersList, TunnelModel, LayersDescriptionModel, NegotiationIntentionModel
+)
 
 class BaseTunnel(metaclass=ABCMeta):
     def __init__(self, src_mac, dst_mac, layers: LayersList):
@@ -71,14 +78,14 @@ class PendingTunnel(metaclass=ABCMeta):
 
     @classmethod
     def tunnel_intention_for_initiator(cls, src_mac, dst_mac,
-                                       layers: LayersDescriptionModel, timeout) -> PendingTunnel:
+                                       layers: LayersDescriptionModel, timeout) -> 'PendingTunnel':
         tunnel_intention = TunnelIntention(src_mac, dst_mac,
                                            list(layers.layers.keys()))
         return InitiatorPendingTunnel(tunnel_intention, layers, timeout)
 
     @classmethod
     def tunnel_intention_for_responder(cls, transport) -> Tuple[asyncio.Protocol,
-                                                                Awaitable[PendingTunnel]]:
+                                                                Awaitable['PendingTunnel']]:
         # TODO read neg
         # TODO validate neg
 
@@ -104,15 +111,19 @@ class InitiatorPendingTunnel(PendingTunnel):
         host, port = self._layers.dest
         neg = NegotiationIntentionModel(src_mac=self.tunnel_intention.src_mac,
                                         dst_mac=self.tunnel_intention.dst_mac,
-                                        layers=self.layers.layers)
-        ext_prot = InitiatorExteriorTcpProtocol(neg)
+                                        layers=self._layers.layers)
+        int_prot = InitiatorInteriorTcpProtocol()
+        ext_prot = InitiatorExteriorTcpProtocol(neg, int_prot)
         await loop.create_connection(lambda: ext_prot, host, port)
         # TODO handle close?
 
         await ext_prot.fut_negotiated
-        # TODO start int serv + pipe
+        server = await loop.create_server(int_prot, '127.0.0.1')
 
+        assert 1 == len(server.sockets)
+        _, port = server.sockets[0].getsockname()
         # TODO other layers
+        # TODO below !!!!
         pm = OpenvpnProcessManager(dst_mac, **layers['openvpn'])
         lt = LocalTunnel(src_mac, dst_mac, pm)
         await pm.start(timeout)
@@ -128,23 +139,28 @@ class ResponderPendingTunnel(PendingTunnel):
 
 
 class InitiatorExteriorTcpProtocol(asyncio.Protocol):
-    def __init__(self, negotiation_intention: NegotiationIntentionModel):
+    def __init__(self, negotiation_intention: NegotiationIntentionModel,
+                 interior_protocol):
         self.negotiation_intention = negotiation_intention
+        self.interior_protocol = interior_protocol
         self.enc_reader = EncryptedNewlineReader()
         self.is_negotiated = False
         self.fut_negotiated = asyncio.Future()
 
     def connection_made(self, transport):
         self.transport = transport
-        line = self.enc_reader.encrypt_line(json.dumps(self.negotiation_intention.asdict()))
+        self.interior_protocol.server_transport = transport
+        # Send negotiation message.
+        line = self.enc_reader.encrypt_line(
+            json.dumps(self.negotiation_intention.asdict()).encode())
         self.transport.write(line + b'\n')
-        # TODO
 
     def data_received(self, data):
         if not self.is_negotiated:
             self.enc_reader.feed_data(data)
+            # Read ack message.
             for line in self.enc_reader:
-                exp_ack = bf'ack{self.negotiation_intention.nonce}'
+                exp_ack = b'ack' + self.negotiation_intention.nonce
                 if line != exp_ack:
                     logger.error('Bad ack! Expected: %r. Received: %r', exp_ack, line)
                     self.transport.close()
@@ -154,28 +170,40 @@ class InitiatorExteriorTcpProtocol(asyncio.Protocol):
             data = self.enc_reader.buf
             self.is_negotiated = True
             self.fut_negotiated.set_result()
-
-        # TODO
+        self.interior_protocol.write(data)
 
     def connection_lost(self, exc):
         self.fut_negotiated.set_exception(OSError('connection closed'))
-        # TODO
+        self.interior_protocol.close()
 
 
 class InitiatorInteriorTcpProtocol(asyncio.Protocol):
     def __init__(self):
-        pass
+        self.write_q = []
+        self.transport = None
+        self.server_transport = None  # filled in the Exterior Protocol
 
     def connection_made(self, transport):
         self.transport = transport
-        # TODO
+        while self.write_q:
+            self.transport.write(self.write_q.pop(0))
+        self.write_q.clear()
 
     def data_received(self, data):
-        # TODO
+        self.server_transport.write(data)
 
     def connection_lost(self, exc):
-        # TODO
+        self.server_transport.close()
 
+    def write(self, data):
+        if self.transport is None:
+            self.write_q.append(data)
+            return
+        self.transport.write(data)
+
+    def close(self):
+        if self.transport:
+            self.transport.close()
 
 class ResponderExteriorTcpProtocol(asyncio.Protocol):
     def __init__(self):
@@ -187,9 +215,11 @@ class ResponderExteriorTcpProtocol(asyncio.Protocol):
 
     def data_received(self, data):
         # TODO
+        pass
 
     def connection_lost(self, exc):
         # TODO
+        pass
 
 
 class ResponderInteriorTcpProtocol(asyncio.Protocol):
@@ -202,9 +232,11 @@ class ResponderInteriorTcpProtocol(asyncio.Protocol):
 
     def data_received(self, data):
         # TODO
+        pass
 
     def connection_lost(self, exc):
         # TODO
+        pass
 
 
 
@@ -233,77 +265,6 @@ class OpenvpnProcessManager:
 # TODO complete impl in the top level
 # TODO impl the shit below
 
-
-# class TcpPipeClient:
-#     def __init__(self, host, port, src_mac, dst_mac, layers):
-#         pass
-
-#     async def negotiate(self):
-#         # return host, port of the bound server.
-#         pass
-
-#     async def close_wait(self):
-#         pass
-
-
-# class ClientProtocol(asyncio.Protocol):
-#     transport = None
-
-#     def __init__(self, server_transport):
-#         self.server_transport = server_transport
-#         self.write_q = []
-
-#     def connection_made(self, transport):
-#         self.transport = transport
-#         self.server_transport.resume_reading()
-#         print('resume')
-#         while self.write_q:
-#             self.transport.write(self.write_q.pop(0))
-
-#     def data_received(self, data):
-#         self.server_transport.write(data)
-
-#     def write(self, data):
-#         if self.transport is None:
-#             self.write_q.append(data)
-#             return
-#         self.transport.write(data)
-
-
-# class ServerProtocol(asyncio.Protocol):
-#     def connection_made(self, transport, message_handler):
-#         self.transport = transport
-#         self.is_negotiating = True
-#         self.negotiation_data = b''
-#         # self.transport.pause_reading()
-#         # print('pause')
-#         # self.client_protocol = ClientProtocol(self.transport)
-#         # coro = loop.create_connection(lambda: self.client_protocol, '::1', 5201)
-#         # loop.create_task(coro)
-
-#     def data_received(self, data):
-#         try:
-#             if self.is_negotiating:
-#                 self.negotiation_data += data
-#                 line_rest = self.negotiation_data.split(b'\n', 1)
-#                 if len(line_rest) != 2:
-#                     return
-#                 line, data = line_rest
-#                 response = message_handler.accept(line)
-#                 # TODO await ovpn is up
-#                 self.transport.write(response)
-#                 self.is_negotiating = False
-#                 self.client_protocol = ClientProtocol(self.transport)
-#                 # TODO create_connection
-#                 if not data:
-#                     return
-#             self.client_protocol.write(data)
-#         except:
-#             self.transport.close()
-#             raise
-
-#     def connection_lost(self, exc):
-#         pass
 
 
 

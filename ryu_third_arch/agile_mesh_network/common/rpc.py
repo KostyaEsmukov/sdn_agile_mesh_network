@@ -1,4 +1,5 @@
 import asyncio
+import builtins
 import json
 from abc import ABCMeta
 from typing import Any, Optional
@@ -64,7 +65,7 @@ class RpcSession:
     def close(self):
         for fut in self.msg_id_to_future.values():
             fut.set_exception(OSError('connection closed'))
-        self.msg_id_to_future.clean()
+        self.msg_id_to_future.clear()
         self.transport.close()
 
     def _process_message(self, line):
@@ -79,6 +80,16 @@ class RpcSession:
             assert not name
             fut = self.msg_id_to_future.pop(msg_id)
             fut.set_result(kwargs)
+            return None
+        if msg_type == 're':  # erroneous response to our command
+            assert not name
+            fut = self.msg_id_to_future.pop(msg_id)
+            type_str = kwargs['type']
+            type_ = getattr(builtins, type_str, None)
+            if not type_ or not issubclass(type_, Exception):
+                type_ = Exception
+            str_ = kwargs['str']
+            fut.set_exception(type_(str_))
             return None
         raise AssertionError(f'Unknown msg_type {msg_type}')
 
@@ -111,7 +122,7 @@ class RpcProtocol(asyncio.Protocol):
     def command_future_callback(self, fut):
         if fut.done() and fut.exception():
             logger.error('RPC: error during command '
-                         'processing.', fut.exception())
+                         'processing.', exc_info=fut.exception())
         self.sessions.discard(self.session)
         self.session.close()
 

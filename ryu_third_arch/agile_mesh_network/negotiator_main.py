@@ -9,6 +9,7 @@ from agile_mesh_network.common.models import TunnelModel, LayersDescriptionModel
 from agile_mesh_network.common.rpc import (
     RpcBroadcast, RpcCommand, RpcSession, RpcUnixServer
 )
+from agile_mesh_network.negotiator.tunnel import PendingTunnel
 
 logger = getLogger('negotiator')
 logging.basicConfig(level=logging.INFO)
@@ -19,15 +20,16 @@ class TunnelsState:
 
     def __init__(self, *, loop):
         self.tunnel_created_callback = None
-        self.tunnels = set()
+        self.tunnels = {}
         self.loop = loop
 
     async def create_tunnel(self, src_mac, dst_mac, timeout,
                             layers: LayersDescriptionModel):
-        pending_tunnel = PendingTunnel.local_tunnel_for_initiator(
+        pending_tunnel = PendingTunnel.tunnel_intention_for_initiator(
             src_mac, dst_mac, layers, timeout)
+        tunnel_intention = pending_tunnel.tunnel_intention
 
-        old_tunnel = self.tunnels.get(pending_tunnel.tunnel_intention)
+        old_tunnel = self.tunnels.get(tunnel_intention)
         if old_tunnel:
             if old_tunnel.is_dead:
                 self.tunnels.pop(old_tunnel)
@@ -35,7 +37,7 @@ class TunnelsState:
                 raise ValueError(f"tunnel {src_mac}<->{dst_mac} is already "
                                  "created")
         # Prevent concurrent tunnel creations.
-        self.tunnels.add(pending_tunnel.tunnel_intention)
+        self.tunnels[tunnel_intention] = tunnel_intention
         tunnel = await pending_tunnel.create_tunnel(loop=self.loop)
         assert isinstance(self.tunnels[tunnel], TunnelIntention)
         self.tunnels[tunnel] = tunnel
@@ -46,7 +48,7 @@ class TunnelsState:
         return tunnel_model
 
     def active_tunnels(self):
-        return [lt.model() for lt in self.tunnels]
+        return [lt.model() for lt in self.tunnels.values()]
 
     def register_tunnel_created_callback(self, callback):
         assert not self.tunnel_created_callback
@@ -142,7 +144,7 @@ class TcpExteriorServerProtocol(asyncio.Protocol):
 
 
 class TcpExteriorServer:
-    def __init__(self, tunnels_state, *, loop, tcp_port, tcp_host='0.0.0.0'):
+    def __init__(self, tunnels_state, *, loop, tcp_port=None, tcp_host='0.0.0.0'):
         self.tcp_host = tcp_host
         self.tcp_port = tcp_port
         self.server = None
@@ -153,10 +155,12 @@ class TcpExteriorServer:
         return f"TcpExteriorServer server at {self.tcp_host}:{self.tcp_port}"
 
     async def start_server(self):
-        self.server = await asyncio.start_server(
+        self.server = await self.loop.create_server(
             lambda: TcpExteriorServerProtocol(
                 self._tunnels_state.create_tunnel_from_transport),
-            self.tcp_host, self.tcp_port, loop=self.loop)
+            self.tcp_host, self.tcp_port)
+        assert 1 == len(self.server.sockets)
+        _, self.tcp_port = self.server.sockets[0].getsockname()
 
     async def close_wait(self):
         self.server.close()

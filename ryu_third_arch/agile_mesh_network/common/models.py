@@ -1,7 +1,14 @@
 import os
+import base64
 from typing import Any, Sequence, Mapping
 
 from dataclasses import dataclass, asdict, field
+
+
+def random_string():
+    # Must be json-serializable (i.e. str, not bytes).
+    return base64.b64encode(os.urandom(10)).decode()
+
 
 LayersList = Sequence[str]
 
@@ -33,6 +40,6 @@ class NegotiationIntentionModel:
     layers: Mapping[str, Any]
 
     # Prevent replay attack for the 'ack' response.
-    nonce: str = field(default_factory=lambda: os.urandom(10))
+    nonce: str = field(default_factory=random_string)
 
     asdict = asdict
