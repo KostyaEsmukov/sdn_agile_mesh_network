@@ -54,6 +54,19 @@ class TunnelIntention(BaseTunnel):
     def is_tunnel_active(self):
         return False
 
+    def to_negotiation_intention(self, layers: LayersDescriptionModel):
+        return NegotiationIntentionModel(src_mac=self.src_mac,
+                                         dst_mac=self.dst_mac,
+                                         layers=layers)
+
+    @classmethod
+    def from_negotiation_intention(cls, negotiation_intention: NegotiationIntentionModel
+                                   ) -> Tuple['TunnelIntention', LayersDescriptionModel]:
+        tunnel_intention = cls(src_mac=negotiation_intention.src_mac,
+                               dst_mac=negotiation_intention.dst_mac,
+                               layers=list(negotiation_intention.layers.keys()))
+        return tunnel_intention, negotiation_intention.layers
+
 
 class Tunnel:  # TODO
     def __init__(self, src_mac, dst_mac, process_manager):
@@ -84,15 +97,14 @@ class PendingTunnel(metaclass=ABCMeta):
         return InitiatorPendingTunnel(tunnel_intention, layers, timeout)
 
     @classmethod
-    def tunnel_intention_for_responder(cls, transport) -> Tuple[asyncio.Protocol,
-                                                                Awaitable['PendingTunnel']]:
-        # TODO read neg
-        # TODO validate neg
+    def tunnel_intention_for_responder(cls) -> Tuple[asyncio.Protocol,
+                                                     Awaitable['PendingTunnel']]:
+        protocol = ResponderExteriorTcpProtocol()
+        return protocol, ResponderPendingTunnel.negotiate(protocol)
 
-        pass
-
-    def __init__(self, tunnel_intention):
+    def __init__(self, tunnel_intention, layers: LayersDescriptionModel):
         self.tunnel_intention = tunnel_intention
+        self._layers = layers
 
     @abstractmethod
     async def create_tunnel(self, *, loop) -> Tunnel:
@@ -102,16 +114,13 @@ class PendingTunnel(metaclass=ABCMeta):
 class InitiatorPendingTunnel(PendingTunnel):
     def __init__(self, tunnel_intention, layers: LayersDescriptionModel,
                  timeout):
-        super().__init__(tunnel_intention)
-        self._layers = layers
+        super().__init__(tunnel_intention, layers)
         self._timeout = timeout
 
     async def create_tunnel(self, *, loop) -> Tunnel:
         assert self._layers.protocol == 'tcp'
         host, port = self._layers.dest
-        neg = NegotiationIntentionModel(src_mac=self.tunnel_intention.src_mac,
-                                        dst_mac=self.tunnel_intention.dst_mac,
-                                        layers=self._layers.layers)
+        neg = self.tunnel_intention.to_negotiation_intention(self._layers.layers)
         int_prot = InitiatorInteriorTcpProtocol()
         ext_prot = InitiatorExteriorTcpProtocol(neg, int_prot)
         await loop.create_connection(lambda: ext_prot, host, port)
@@ -130,6 +139,14 @@ class InitiatorPendingTunnel(PendingTunnel):
 
 
 class ResponderPendingTunnel(PendingTunnel):
+
+    @classmethod
+    async def negotiate(cls, protocol: 'ResponderExteriorTcpProtocol') -> PendingTunnel:
+        await protocol.fut_intention_read
+        # TODO validate MAC
+        tunnel_intention, layers = TunnelIntention.from_negotiation_intention(
+            protocol.negotiation_intention)
+        return cls(tunnel_intention, layers)
 
     async def create_tunnel(self, *, loop) -> Tunnel:
         # TODO start ovpn
@@ -166,10 +183,14 @@ class InitiatorExteriorTcpProtocol(asyncio.Protocol):
                     self.transport.close()
                     self.fut_negotiated.set_exception(OSError('bad ack'))
                     return
+                data = self.enc_reader.buf
+                self.is_negotiated = True
+                self.fut_negotiated.set_result(None)
+                if not data:
+                    return
                 break
-            data = self.enc_reader.buf
-            self.is_negotiated = True
-            self.fut_negotiated.set_result()
+            else:
+                return
         self.interior_protocol.write(data)
 
     def connection_lost(self, exc):
@@ -207,17 +228,37 @@ class InitiatorInteriorTcpProtocol(asyncio.Protocol):
 
 class ResponderExteriorTcpProtocol(asyncio.Protocol):
     def __init__(self):
-        pass
+        self.negotiation_intention = None
+        self.enc_reader = EncryptedNewlineReader()
+        self.is_intention_read = False
+        self.fut_intention_read = asyncio.Future()
+        self.write_q = []
 
     def connection_made(self, transport):
         self.transport = transport
-        # TODO
 
     def data_received(self, data):
+        if not self.is_intention_read:
+            self.enc_reader.feed_data(data)
+            for line in self.enc_reader:
+                self.negotiation_intention = \
+                    NegotiationIntentionModel(**json.loads(line.decode()))
+                data = self.enc_reader.buf
+                self.is_intention_read = True
+                self.fut_intention_read.set_result(None)
+                if not data:
+                    return
+                break
+            else:
+                return
+        self.write_interior(data)
+
+    def connection_lost(self, exc):
+        self.fut_intention_read.set_exception(OSError('connection closed'))
         # TODO
         pass
 
-    def connection_lost(self, exc):
+    def write_interior(self, data):
         # TODO
         pass
 

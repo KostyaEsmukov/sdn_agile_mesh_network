@@ -59,9 +59,9 @@ class TunnelsState:
     async def close_tunnels_wait(self):
         pass  # TODO
 
-    def create_tunnel_from_transport(self, transport) -> asyncio.Protocol:
+    def create_tunnel_from_protocol(self) -> asyncio.Protocol:
         protocol, aw_pending_tunnel = \
-            PendingTunnel.tunnel_intention_for_responder(transport)
+            PendingTunnel.tunnel_intention_for_responder()
         fut = asyncio.ensure_future(aw_pending_tunnel, loop=self.loop)
         # TODO fut callback - close on exc and verify on succ.
         return protocol
@@ -129,11 +129,9 @@ class RpcResponder:
 
 class TcpExteriorServerProtocol(asyncio.Protocol):
     def __init__(self, protocol_factory):
-        self.protocol_factory = protocol_factory
-        self.protocol = None
+        self.protocol = protocol_factory()
 
     def connection_made(self, transport):
-        self.protocol = self.protocol_factory(transport)
         self.protocol.connection_made(transport)
 
     def data_received(self, data):
@@ -157,7 +155,7 @@ class TcpExteriorServer:
     async def start_server(self):
         self.server = await self.loop.create_server(
             lambda: TcpExteriorServerProtocol(
-                self._tunnels_state.create_tunnel_from_transport),
+                self._tunnels_state.create_tunnel_from_protocol),
             self.tcp_host, self.tcp_port)
         assert 1 == len(self.server.sockets)
         _, self.tcp_port = self.server.sockets[0].getsockname()
