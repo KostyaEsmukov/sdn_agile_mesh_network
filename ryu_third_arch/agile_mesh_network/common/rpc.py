@@ -120,11 +120,12 @@ class RpcProtocol(asyncio.Protocol):
         self.session.close()
 
     def command_future_callback(self, fut):
-        if fut.done() and fut.exception():
+        assert fut.done()
+        if fut.exception():
             logger.error('RPC: error during command '
                          'processing.', exc_info=fut.exception())
-        self.sessions.discard(self.session)
-        self.session.close()
+            self.sessions.discard(self.session)
+            self.session.close()
 
 
 class RpcUnixServer:

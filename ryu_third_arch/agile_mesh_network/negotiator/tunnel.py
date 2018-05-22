@@ -180,9 +180,6 @@ class OpenvpnProcessManager:
         pass
     # TODO stop??
 
-# TODO process manager vs pipe client
-# TODO complete impl in the top level
-# TODO impl the shit below
 
 
 

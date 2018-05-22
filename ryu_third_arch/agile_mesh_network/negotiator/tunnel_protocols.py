@@ -1,12 +1,11 @@
 import asyncio
 import json
-from abc import ABCMeta, abstractmethod
-from typing import Awaitable, Tuple
+from logging import getLogger
 
 from agile_mesh_network.common.reader import EncryptedNewlineReader
-from agile_mesh_network.common.models import (
-    LayersList, TunnelModel, LayersDescriptionModel, NegotiationIntentionModel
-)
+from agile_mesh_network.common.models import NegotiationIntentionModel
+
+logger = getLogger(__name__)
 
 
 class InitiatorExteriorTcpProtocol(asyncio.Protocol):
@@ -48,8 +47,12 @@ class InitiatorExteriorTcpProtocol(asyncio.Protocol):
         self.interior_protocol.write(data)
 
     def connection_lost(self, exc):
+        logger.info('%s: connection lost', type(self).__name__, exc_info=exc)
         self.fut_negotiated.set_exception(OSError('connection closed'))
         self.interior_protocol.close()
+
+    def close(self):
+        pass  # TODO
 
 
 class InitiatorInteriorTcpProtocol(asyncio.Protocol):
@@ -117,6 +120,9 @@ class ResponderExteriorTcpProtocol(asyncio.Protocol):
         # TODO
         pass
 
+    def close(self):
+        pass  # TODO
+
 
 class ResponderInteriorTcpProtocol(asyncio.Protocol):
     def __init__(self):
@@ -133,4 +139,7 @@ class ResponderInteriorTcpProtocol(asyncio.Protocol):
     def connection_lost(self, exc):
         # TODO
         pass
+
+    def close(self):
+        pass  # TODO
 

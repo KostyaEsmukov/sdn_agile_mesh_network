@@ -23,10 +23,7 @@ class TunnelsState:
         self.tunnels = {}
         self.loop = loop
 
-    async def create_tunnel(self, src_mac, dst_mac, timeout,
-                            layers: LayersDescriptionModel):
-        pending_tunnel = PendingTunnel.tunnel_intention_for_initiator(
-            src_mac, dst_mac, layers, timeout)
+    async def _create_pending_tunnel(self, pending_tunnel):
         tunnel_intention = pending_tunnel.tunnel_intention
 
         old_tunnel = self.tunnels.get(tunnel_intention)
@@ -47,6 +44,13 @@ class TunnelsState:
             await self.tunnel_created_callback(tunnel_model)
         return tunnel_model
 
+    async def create_tunnel(self, src_mac, dst_mac, timeout,
+                            layers: LayersDescriptionModel):
+        pending_tunnel = PendingTunnel.tunnel_intention_for_initiator(
+            src_mac, dst_mac, layers, timeout)
+        tunnel_model = await self._create_pending_tunnel(pending_tunnel)
+        return tunnel_model
+
     def active_tunnels(self):
         return [lt.model() for lt in self.tunnels.values()]
 
@@ -62,8 +66,15 @@ class TunnelsState:
     def create_tunnel_from_protocol(self) -> asyncio.Protocol:
         protocol, aw_pending_tunnel = \
             PendingTunnel.tunnel_intention_for_responder()
-        fut = asyncio.ensure_future(aw_pending_tunnel, loop=self.loop)
-        # TODO fut callback - close on exc and verify on succ.
+
+        async def task():
+            try:
+                pending_tunnel = await aw_pending_tunnel
+                await self._create_pending_tunnel(pending_tunnel)
+            except:
+                protocol.close()
+
+        asyncio.ensure_future(task(), loop=self.loop)
         return protocol
 
 
@@ -129,7 +140,11 @@ class RpcResponder:
 
 class TcpExteriorServerProtocol(asyncio.Protocol):
     def __init__(self, protocol_factory):
-        self.protocol = protocol_factory()
+        try:
+            self.protocol = protocol_factory()
+        except:
+            logger.error('%s: __init__', type(self).__name__, exc_info=True)
+            raise
 
     def connection_made(self, transport):
         self.protocol.connection_made(transport)
