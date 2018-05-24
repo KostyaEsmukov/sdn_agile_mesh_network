@@ -7,8 +7,8 @@ from agile_mesh_network.common.models import (
     LayersList, TunnelModel, LayersDescriptionModel, NegotiationIntentionModel
 )
 from agile_mesh_network.negotiator.tunnel_protocols import (
-    InitiatorExteriorTcpProtocol, InitiatorInteriorTcpProtocol,
-    ResponderExteriorTcpProtocol, ResponderInteriorTcpProtocol
+    InitiatorExteriorTcpProtocol, ResponderExteriorTcpProtocol,
+    InteriorProtocol
 )
 
 
@@ -125,21 +125,25 @@ class InitiatorPendingTunnel(PendingTunnel):
         assert self._layers.protocol == 'tcp'
         host, port = self._layers.dest
         neg = self.tunnel_intention.to_negotiation_intention(self._layers.layers)
-        int_prot = InitiatorInteriorTcpProtocol()
-        ext_prot = InitiatorExteriorTcpProtocol(neg, int_prot)
-        await loop.create_connection(lambda: ext_prot, host, port)
-        # TODO handle close?
+        ext_prot = InitiatorExteriorTcpProtocol(neg)
+        try:
+            await loop.create_connection(lambda: ext_prot, host, port)
+            # TODO handle close?
 
-        await ext_prot.fut_negotiated
-        server = await loop.create_server(int_prot, '127.0.0.1')
+            await ext_prot.fut_negotiated
+            server = await loop.create_server(lambda: InteriorProtocol(ext_prot),
+                                              '127.0.0.1')
 
-        assert 1 == len(server.sockets)
-        _, port = server.sockets[0].getsockname()
-        # TODO other layers
-        # TODO below !!!!
-        pm = OpenvpnProcessManager(dst_mac, **layers['openvpn'])
-        lt = LocalTunnel(src_mac, dst_mac, pm)
-        await pm.start(timeout)
+            assert 1 == len(server.sockets)
+            _, port = server.sockets[0].getsockname()
+            # TODO other layers
+            # TODO below !!!!
+            pm = OpenvpnProcessManager(dst_mac, **layers['openvpn'])
+            lt = LocalTunnel(src_mac, dst_mac, pm)
+            await pm.start(timeout)
+        except:
+            ext_prot.close()
+            raise
 
 
 class ResponderPendingTunnel(PendingTunnel):
@@ -153,31 +157,43 @@ class ResponderPendingTunnel(PendingTunnel):
         return cls(tunnel_intention, layers)
 
     async def create_tunnel(self, *, loop) -> Tunnel:
-        # TODO start ovpn
+        pm = ProcessManager.from_layers_responder(
+            self.tunnel_intention.dst_mac, self._layers)
+        await pm.start()  # TODO timeout??
         # TODO connect to ovpn + pipe
         # TODO send ack
         pass
 
 
-class OpenvpnProcessManager:
-    """Manages openvpn processes."""
-    layers = ('openvpn',)
+class ProcessManager(metaclass=ABCMeta):
+    @staticmethod
+    def from_layers_responder(dst_mac, layers: LayersDescriptionModel) -> 'TPM':
+        # TODO start ovpn
+        pass
 
-    def __init__(self, dst_mac, protocol, remote):
+    @abstractmethod
+    async def start(self, timeout):
+        pass
+
+
+class OpenvpnProcessManager(ProcessManager):
+    """Manages openvpn processes."""
+
+    def __init__(self, dst_mac, protocol, remote: Tuple[str, int]):
         # TODO setup configs, certs
         pass
 
-    async def start(self, timeout):
+    async def start(self, timeout=None):
         logger.warning('Pretending to start openvpn!')
         # TODO impl!
 
-    @property
-    def is_tunnel_active(self):
-        pass
+    # @property
+    # def is_tunnel_active(self):
+    #     pass
 
-    @property
-    def is_dead(self):
-        pass
+    # @property
+    # def is_dead(self):
+    #     pass
     # TODO stop??
 
 
