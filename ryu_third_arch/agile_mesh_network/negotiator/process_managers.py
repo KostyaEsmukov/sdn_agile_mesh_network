@@ -3,30 +3,29 @@ from abc import ABCMeta, abstractmethod
 from typing import Tuple
 
 from agile_mesh_network.common.models import LayersDescriptionModel
-from agile_mesh_network.negotiator.tunnel_protocols import (
-    InitiatorExteriorTcpProtocol, ResponderExteriorTcpProtocol,
-)
+from agile_mesh_network.negotiator.tunnel_protocols import PipeContext
 
 
 class ProcessManager(metaclass=ABCMeta):
     @staticmethod
     def from_layers_responder(dst_mac, layers: LayersDescriptionModel,
-                              protocol: ResponderExteriorTcpProtocol) -> 'ProcessManager':
-        # TODO connect to ovpn + pipe
-
-        # TODO start ovpn
-        pass
-
-    @staticmethod
-    def from_layers_initiator(dst_mac, layers: LayersDescriptionModel,
-                              protocol: InitiatorExteriorTcpProtocol) -> 'ProcessManager':
-
+                              pipe_context: PipeContext
+                              ) -> 'ProcessManager':
         # TODO other layers
         assert ('openvpn',) == tuple(layers.keys()), \
             'Only openvpn is implemented yet'
 
-        # TODO create_local_tcp_server
-        return OpenvpnProcessManager(dst_mac, local_tcp_port **layers['openvpn'])
+        return OpenvpnResponderProcessManager(dst_mac, layers['openvpn'], pipe_context)
+
+    @staticmethod
+    def from_layers_initiator(dst_mac, layers: LayersDescriptionModel,
+                              pipe_context: PipeContext
+                              ) -> 'ProcessManager':
+        # TODO other layers
+        assert ('openvpn',) == tuple(layers.keys()), \
+            'Only openvpn is implemented yet'
+
+        return OpenvpnInitiatorProcessManager(dst_mac, layers['openvpn'], pipe_context)
 
     @abstractmethod
     async def start(self, timeout=None):
@@ -68,18 +67,18 @@ class OpenvpnProcessManager(ProcessManager):
     # TODO stop??
 
 
-async def create_local_tcp_client(exterior_protocol, local_dest_tcp_port, *,
+async def create_local_tcp_client(pipe_context, local_dest_tcp_port, *,
                                   loop=None):
     loop = loop or asyncio.get_event_loop()
     transport, _ = await loop.create_connection(
-        single_connection_factory(InteriorProtocol(exterior_protocol)),
+        single_connection_factory(InteriorProtocol(pipe_context)),
         '127.0.0.1', local_dest_tcp_port)
     return transport
 
 
-async def create_local_tcp_server(exterior_protocol, *, loop=None):
+async def create_local_tcp_server(pipe_context, *, loop=None):
     loop = loop or asyncio.get_event_loop()
-    protocol = InteriorProtocol(exterior_protocol)
+    protocol = InteriorProtocol(pipe_context)
     server = await loop.create_server(
         single_connection_factory(protocol),
         '127.0.0.1')
@@ -103,17 +102,16 @@ def single_connection_factory(protocol):
 
 class InteriorProtocol(asyncio.Protocol):
 
-    def __init__(self, exterior_protocol):
+    def __init__(self, pipe_context: PipeContext):
         self.transport = None
-        self.exterior_protocol = exterior_protocol
+        self.pipe_context = pipe_context
 
     def connection_made(self, transport):
         self.transport = transport
-        self.exterior_protocol.contribute_interior_transport(transport)
+        self.pipe_context.contribute_interior_transport(transport)
 
     def data_received(self, data):
-        self.exterior_protocol.write(data)
+        self.pipe_context.write_to_exterior(data)
 
     def connection_lost(self, exc):
-        self.transport.close()
-        self.exterior_protocol.close()
+        self.pipe_context.close()

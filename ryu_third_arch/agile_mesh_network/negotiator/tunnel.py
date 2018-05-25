@@ -8,7 +8,7 @@ from agile_mesh_network.common.models import (
 )
 from agile_mesh_network.negotiator.process_managers import ProcessManager
 from agile_mesh_network.negotiator.tunnel_protocols import (
-    InitiatorExteriorTcpProtocol, ResponderExteriorTcpProtocol,
+    InitiatorExteriorTcpProtocol, ResponderExteriorTcpProtocol, PipeContext,
 )
 
 
@@ -100,7 +100,8 @@ class PendingTunnel(metaclass=ABCMeta):
     @classmethod
     def tunnel_intention_for_responder(cls) -> Tuple[asyncio.Protocol,
                                                      Awaitable['PendingTunnel']]:
-        protocol = ResponderExteriorTcpProtocol()
+        pipe_context = PipeContext()
+        protocol = ResponderExteriorTcpProtocol(pipe_context)
         return protocol, ResponderPendingTunnel.negotiate(protocol)
 
     def __init__(self, tunnel_intention, layers: LayersDescriptionModel):
@@ -122,19 +123,20 @@ class InitiatorPendingTunnel(PendingTunnel):
         assert self._layers.protocol == 'tcp'
         loop = asyncio.get_event_loop()
         host, port = self._layers.dest
+        pipe_context = PipeContext()
         neg = self.tunnel_intention.to_negotiation_intention(self._layers.layers)
-        ext_prot = InitiatorExteriorTcpProtocol(neg)
+        ext_prot = InitiatorExteriorTcpProtocol(pipe_context, neg)
         try:
             await loop.create_connection(lambda: ext_prot, host, port)
             # TODO handle close?
 
             await ext_prot.fut_negotiated
             pm = ProcessManager.from_layers_initiator(
-                self.tunnel_intention.dst_mac, self._layers, ext_prot)
+                self.tunnel_intention.dst_mac, self._layers, pipe_context)
             await pm.start(timeout)
             return Tunnel(self.tunnel_intention, pm)
         except:
-            ext_prot.close()
+            pipe_context.close()
             raise
 
 
@@ -154,7 +156,7 @@ class ResponderPendingTunnel(PendingTunnel):
 
     async def create_tunnel(self) -> Tunnel:
         pm = ProcessManager.from_layers_responder(
-            self.tunnel_intention.dst_mac, self._layers, self._protocol)
+            self.tunnel_intention.dst_mac, self._layers, self._protocol.pipe_context)
         await pm.start()  # TODO timeout??
         self._protocol.write_ack()
         return Tunnel(self.tunnel_intention, pm)

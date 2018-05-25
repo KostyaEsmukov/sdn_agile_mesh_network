@@ -12,6 +12,51 @@ from agile_mesh_network.common.models import NegotiationIntentionModel
 logger = getLogger(__name__)
 
 
+class PipeContext:
+    def __init__(self):
+        self._closing_set = set()
+        self.exterior_transport = None
+        self.interior_transport = None
+        self._write_q = []
+        self._close_callbacks = []
+
+    def contribute_exterior_transport(self, exterior_transport):
+        assert self.exterior_transport is None
+        self.exterior_transport = exterior_transport
+        self.add_closing(exterior_transport)
+
+    def contribute_interior_transport(self, interior_transport):
+        assert self.interior_transport is None
+        self.interior_transport = interior_transport
+        self.add_closing(interior_transport)
+        while self._write_q:
+            self.interior_transport.write(self._write_q.pop(0))
+
+    def write_to_exterior(self, data):
+        self.exterior_transport.write(data)
+
+    def write_to_interior(self, data):
+        if self.interior_transport is None:
+            self._write_q.append(data)
+            return
+        self.interior_transport.write(data)
+
+    def add_closing(self, closing):
+        assert hasattr(closing, 'close')
+        self._closing_set.add(closing)
+
+    def add_close_callback(self, callback):
+        self._close_callbacks.append(callback)
+
+    def close(self):
+        for closing in self._closing_set:
+            closing.close()
+        self._closing_set.clear()
+        for callback in self._close_callbacks:
+            callback()
+        self._close_callbacks.clear()
+
+
 class NegotiationMessages:
     @classmethod
     def compose_negotiation(cls,
@@ -36,54 +81,41 @@ class NegotiationMessages:
 
 
 class BaseExteriorProtocol(asyncio.Protocol, metaclass=ABCMeta):
-    def __init__(self):
+    def __init__(self, pipe_context: PipeContext):
         self.interior_transport = None
         self._enc_reader = EncryptedNewlineReader()
-        self._write_q = []
+        self.pipe_context = pipe_context
 
-    # Used by interior protocol
-    def contribute_interior_transport(self, interior_transport):
-        self.interior_transport = interior_transport
-        while self._write_q:
-            self.interior_transport.write(self.write_q.pop(0))
+    def connection_made(self, transport):
+        self.transport = transport
+        self.pipe_context.contribute_exterior_transport(transport)
 
-    def interior_write(self, data):
-        if self.interior_transport is None:
-            self._write_q.append(data)
-            return
-        self.interior_transport.write(data)
-
-    def connection_lost(self, exc):  # Protocol method
+    def connection_lost(self, exc):
         logger.info('%s: connection lost', type(self).__name__, exc_info=exc)
-        self.close()
-
-    def write(self, data):  # Used by interior protocol
-        self.transport.write(data)
-
-    def close(self):  # Used by interior protocol
-        if self.transport:
-            self.transport.close()
-        if self.interior_transport:
-            self.interior_transport.close()
+        self.pipe_context.close()
 
 
 class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
-    def __init__(self, negotiation_intention: NegotiationIntentionModel):
-        super().__init__()
+    def __init__(self, pipe_context: PipeContext,
+                 negotiation_intention: NegotiationIntentionModel):
+        super().__init__(pipe_context)
         self.negotiation_intention = negotiation_intention
         self.is_negotiated = False
         self.fut_negotiated = asyncio.Future()
+        pipe_context.add_close_callback(
+            lambda: future_set_exception_silent(
+                self.fut_negotiated, OSError('connection closed')))
 
-    def connection_made(self, transport):  # Protocol method
-        self.transport = transport
-        self.write_negotiation()
+    def connection_made(self, transport):
+        super().connection_made(transport)
+        self._write_negotiation()
 
-    def write_negotiation(self):
+    def _write_negotiation(self):
         line = self._enc_reader.encrypt_line(
             NegotiationMessages.compose_negotiation(self.negotiation_intention))
         self.transport.write(line + b'\n')
 
-    def data_received(self, data):  # Protocol method
+    def data_received(self, data):
         if not self.is_negotiated:
             self._enc_reader.feed_data(data)
             # Read ack message.
@@ -91,8 +123,8 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
                 try:
                     NegotiationMessages.validate_ack(line, self.negotiation_intention)
                 except Exception as e:
-                    self.close()
                     future_set_exception_silent(self.fut_negotiated, e)
+                    self.pipe_context.close()
                     return
                 data = self._enc_reader.buf
                 self.is_negotiated = True
@@ -102,30 +134,25 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
                 break
             else:
                 return
-        self.interior_write(data)
-
-    def close(self):
-        future_set_exception_silent(self.fut_negotiated,
-                                    OSError('connection closed'))
-        super().close()
+        self.pipe_context.write_to_interior(data)
 
 
 class ResponderExteriorTcpProtocol(BaseExteriorProtocol):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, pipe_context: PipeContext):
+        super().__init__(pipe_context)
         self.negotiation_intention = None
         self.is_intention_read = False
         self.fut_intention_read = asyncio.Future()
-
-    def connection_made(self, transport):  # Protocol method
-        self.transport = transport
+        pipe_context.add_close_callback(
+            lambda: future_set_exception_silent(
+                self.fut_intention_read, OSError('connection closed')))
 
     def write_ack(self):
         line = self._enc_reader.encrypt_line(
             NegotiationMessages.compose_ack(self.negotiation_intention))
         self.transport.write(line + b'\n')
 
-    def data_received(self, data):  # Protocol method
+    def data_received(self, data):
         if not self.is_intention_read:
             self._enc_reader.feed_data(data)
             for line in self._enc_reader:
@@ -138,9 +165,4 @@ class ResponderExteriorTcpProtocol(BaseExteriorProtocol):
                 break
             else:
                 return
-        self.interior_write(data)
-
-    def close(self):
-        future_set_exception_silent(self.fut_intention_read,
-                                    OSError('connection closed'))
-        super().close()
+        self.pipe_context.write_to_interior(data)
