@@ -108,7 +108,7 @@ class PendingTunnel(metaclass=ABCMeta):
         self._layers = layers
 
     @abstractmethod
-    async def create_tunnel(self, *, loop) -> Tunnel:
+    async def create_tunnel(self) -> Tunnel:
         pass
 
 
@@ -118,8 +118,9 @@ class InitiatorPendingTunnel(PendingTunnel):
         super().__init__(tunnel_intention, layers)
         self._timeout = timeout
 
-    async def create_tunnel(self, *, loop) -> Tunnel:
+    async def create_tunnel(self) -> Tunnel:
         assert self._layers.protocol == 'tcp'
+        loop = asyncio.get_event_loop()
         host, port = self._layers.dest
         neg = self.tunnel_intention.to_negotiation_intention(self._layers.layers)
         ext_prot = InitiatorExteriorTcpProtocol(neg)
@@ -151,7 +152,7 @@ class ResponderPendingTunnel(PendingTunnel):
             protocol.negotiation_intention)
         return cls(tunnel_intention, layers, protocol)
 
-    async def create_tunnel(self, *, loop) -> Tunnel:
+    async def create_tunnel(self) -> Tunnel:
         pm = ProcessManager.from_layers_responder(
             self.tunnel_intention.dst_mac, self._layers, self._protocol)
         await pm.start()  # TODO timeout??

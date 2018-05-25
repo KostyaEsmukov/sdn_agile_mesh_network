@@ -129,15 +129,15 @@ class RpcProtocol(asyncio.Protocol):
 
 
 class RpcUnixServer:
-    def __init__(self, unix_sock_path, command_cb, *, loop):
+    def __init__(self, unix_sock_path, command_cb):
         self.server = None
         self.unix_sock_path = unix_sock_path
         self.command_cb = command_cb
-        self.loop = loop
         self.sessions = set()
 
     async def start(self):
-        self.server = await self.loop.create_unix_server(
+        loop = asyncio.get_event_loop()
+        self.server = await loop.create_unix_server(
             lambda: RpcProtocol(self.sessions, self.command_cb),
             self.unix_sock_path)
 
@@ -147,14 +147,14 @@ class RpcUnixServer:
 
 
 class RpcUnixClient:
-    def __init__(self, unix_sock_path, command_cb, *, loop):
+    def __init__(self, unix_sock_path, command_cb):
         self.session = None
         self.unix_sock_path = unix_sock_path
         self.command_cb = command_cb
-        self.loop = loop
 
     async def start(self):
-        transport, protocol = await self.loop.create_unix_connection(
+        loop = asyncio.get_event_loop()
+        transport, protocol = await loop.create_unix_connection(
             lambda: RpcProtocol(set(), self.command_cb),
             self.unix_sock_path)
         self.session = protocol.session

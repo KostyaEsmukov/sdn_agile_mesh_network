@@ -25,8 +25,8 @@ class IntegrationTestCase(TestCase):
                 patch.object(RpcResponder, 'socket_path',
                              os.path.join(td, 'l.sock')):
 
-            tunnels_state = TunnelsState(loop=loop)
-            rpc_responder = RpcResponder(tunnels_state, loop=loop)
+            tunnels_state = TunnelsState()
+            rpc_responder = RpcResponder(tunnels_state)
             loop.run_until_complete(rpc_responder.start_server())
 
             try:
@@ -34,8 +34,7 @@ class IntegrationTestCase(TestCase):
                     assert False
 
                 async def f():
-                    rpc_c = RpcUnixClient(os.path.join(td, 'l.sock'), command_cb,
-                                          loop=loop)
+                    rpc_c = RpcUnixClient(os.path.join(td, 'l.sock'), command_cb)
                     await rpc_c.start()
                     rpc = rpc_c.session
                     resp = await asyncio.wait_for(
@@ -54,18 +53,17 @@ class IntegrationTestCase(TestCase):
 
         with tempfile.TemporaryDirectory() as td:
 
-            tunnels_state_a = TunnelsState(loop=loop)
-            tunnels_state_b = TunnelsState(loop=loop)
+            tunnels_state_a = TunnelsState()
+            tunnels_state_b = TunnelsState()
 
             with patch.object(RpcResponder, 'socket_path',
                               os.path.join(td, 'a.sock')):
-                rpc_responder_a = RpcResponder(tunnels_state_a, loop=loop)
+                rpc_responder_a = RpcResponder(tunnels_state_a)
             with patch.object(RpcResponder, 'socket_path',
                               os.path.join(td, 'b.sock')):
-                rpc_responder_b = RpcResponder(tunnels_state_b, loop=loop)
+                rpc_responder_b = RpcResponder(tunnels_state_b)
 
-            tcp_server_b = TcpExteriorServer(tunnels_state_b,
-                                             loop=loop)
+            tcp_server_b = TcpExteriorServer(tunnels_state_b)
             loop.run_until_complete(rpc_responder_a.start_server())
             loop.run_until_complete(rpc_responder_b.start_server())
             loop.run_until_complete(tcp_server_b.start_server())
@@ -77,8 +75,7 @@ class IntegrationTestCase(TestCase):
                     assert False
 
                 async def f():
-                    rpc_a = RpcUnixClient(os.path.join(td, 'a.sock'), command_cb,
-                                          loop=loop)
+                    rpc_a = RpcUnixClient(os.path.join(td, 'a.sock'), command_cb)
                     await rpc_a.start()
                     rpc = rpc_a.session
                     resp = await asyncio.wait_for(

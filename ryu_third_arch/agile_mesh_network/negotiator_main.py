@@ -18,10 +18,9 @@ logging.basicConfig(level=logging.INFO)
 class TunnelsState:
     """Local state (tunnels + mac addresses)."""
 
-    def __init__(self, *, loop):
+    def __init__(self):
         self.tunnel_created_callback = None
         self.tunnels = {}
-        self.loop = loop
 
     async def _create_pending_tunnel(self, pending_tunnel):
         tunnel_intention = pending_tunnel.tunnel_intention
@@ -35,7 +34,7 @@ class TunnelsState:
                                  "created")
         # Prevent concurrent tunnel creations.
         self.tunnels[tunnel_intention] = tunnel_intention
-        tunnel = await pending_tunnel.create_tunnel(loop=self.loop)
+        tunnel = await pending_tunnel.create_tunnel()
         assert isinstance(self.tunnels[tunnel], TunnelIntention)
         self.tunnels[tunnel] = tunnel
 
@@ -74,7 +73,7 @@ class TunnelsState:
             except:
                 protocol.close()
 
-        asyncio.ensure_future(task(), loop=self.loop)
+        asyncio.ensure_future(task())
         return protocol
 
 
@@ -84,9 +83,9 @@ class RpcResponder:
     # socket_path = '/Users/kostya/amn_negotiator.sock'
     socket_path = '/var/run/amn_negotiator.sock'
 
-    def __init__(self, tunnels_state, *, loop):
+    def __init__(self, tunnels_state):
         self.rpc_server = RpcUnixServer(self.socket_path,
-                                        self._handle_command, loop=loop)
+                                        self._handle_command)
         self._tunnels_state = tunnels_state
         tunnels_state.register_tunnel_created_callback(self.notify_tunnel_created)
 
@@ -157,18 +156,18 @@ class TcpExteriorServerProtocol(asyncio.Protocol):
 
 
 class TcpExteriorServer:
-    def __init__(self, tunnels_state, *, loop, tcp_port=None, tcp_host='0.0.0.0'):
+    def __init__(self, tunnels_state, *, tcp_port=None, tcp_host='0.0.0.0'):
         self.tcp_host = tcp_host
         self.tcp_port = tcp_port
         self.server = None
         self._tunnels_state = tunnels_state
-        self.loop = loop
 
     def __str__(self):
         return f"TcpExteriorServer server at {self.tcp_host}:{self.tcp_port}"
 
     async def start_server(self):
-        self.server = await self.loop.create_server(
+        loop = asyncio.get_event_loop()
+        self.server = await loop.create_server(
             lambda: TcpExteriorServerProtocol(
                 self._tunnels_state.create_tunnel_from_protocol),
             self.tcp_host, self.tcp_port)
@@ -184,13 +183,13 @@ def main():
     logger.info('Starting...')
     loop = asyncio.get_event_loop()
 
-    tunnels_state = TunnelsState(loop=loop)
+    tunnels_state = TunnelsState()
 
-    rpc_responder = RpcResponder(tunnels_state, loop=loop)
+    rpc_responder = RpcResponder(tunnels_state)
     logger.info(f'Starting {rpc_responder}')
     loop.run_until_complete(rpc_responder.start_server())
 
-    tcp_server = TcpExteriorServer(tunnels_state, tcp_port=1194, loop=loop)
+    tcp_server = TcpExteriorServer(tunnels_state, tcp_port=1194)
     logger.info(f'Starting {tcp_server}')
     loop.run_until_complete(tcp_server.start_server())
 
