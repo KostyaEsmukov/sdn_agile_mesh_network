@@ -18,20 +18,20 @@ class ProcessManager(metaclass=ABCMeta):
                               pipe_context: PipeContext
                               ) -> 'ProcessManager':
         # TODO other layers
-        assert ('openvpn',) == tuple(layers.keys()), \
+        assert ('openvpn',) == tuple(layers.layers.keys()), \
             'Only openvpn is implemented yet'
 
-        return OpenvpnResponderProcessManager(dst_mac, layers['openvpn'], pipe_context)
+        return OpenvpnResponderProcessManager(dst_mac, layers.layers['openvpn'], pipe_context)
 
     @staticmethod
     def from_layers_initiator(dst_mac, layers: LayersDescriptionModel,
                               pipe_context: PipeContext
                               ) -> 'ProcessManager':
         # TODO other layers
-        assert ('openvpn',) == tuple(layers.keys()), \
+        assert ('openvpn',) == tuple(layers.layers.keys()), \
             'Only openvpn is implemented yet'
 
-        return OpenvpnInitiatorProcessManager(dst_mac, layers['openvpn'], pipe_context)
+        return OpenvpnInitiatorProcessManager(dst_mac, layers.layers['openvpn'], pipe_context)
 
     @abstractmethod
     async def start(self, timeout=None):
@@ -93,6 +93,7 @@ class OpenvpnResponderProcessManager(BaseOpenvpnProcessManager):
     async def start(self, timeout=None):
         self._local_port = get_free_local_tcp_port()
         await self._start_openvpn_process(self._build_process_args())
+        await asyncio.sleep(1)  # TODO !!!!!!! MAKE THIS RIGHT
         self.interior_protocol = await create_local_tcp_client(
             self._pipe_context, self._local_port)
 

@@ -9,7 +9,7 @@ from agile_mesh_network.negotiator_main import (
     RpcResponder, TunnelsState, TcpExteriorServer
 )
 from agile_mesh_network.common.rpc import RpcSession, RpcUnixClient
-from agile_mesh_network.common.models import LayersDescriptionModel
+from agile_mesh_network.common.models import LayersDescriptionRpcModel
 from agile_mesh_network.negotiator.process_managers import (
     BaseOpenvpnProcessManager, OpenvpnResponderProcessManager,
     OpenvpnInitiatorProcessManager
@@ -95,7 +95,7 @@ class IntegrationTestCase(TestCase):
                     resp = await asyncio.wait_for(
                         rpc.issue_command("create_tunnel", {
                             "src_mac": mac_a, "dst_mac": mac_b,
-                            "timeout": 5, "layers": LayersDescriptionModel(
+                            "timeout": 5, "layers": LayersDescriptionRpcModel(
                                 protocol="tcp",
                                 dest=('127.0.0.1', tcp_server_b.tcp_port),
                                 layers={'openvpn': {'mock': True}},

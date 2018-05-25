@@ -72,12 +72,12 @@ class NegotiationMessages:
 
     @classmethod
     def compose_ack(cls, negotiation_intention: NegotiationIntentionModel) -> bytes:
-        return b'ack' + negotiation_intention.nonce
+        return b'ack' + negotiation_intention.nonce.encode()
 
     @classmethod
     def validate_ack(cls, line: bytes,
                      negotiation_intention: NegotiationIntentionModel) -> str:
-        exp_ack = b'ack' + negotiation_intention.nonce
+        exp_ack = b'ack' + negotiation_intention.nonce.encode()
         if line != exp_ack:
             logger.error('Bad ack! Expected: %r. Received: %r', exp_ack, line)
             raise ValueError('Invalid ack or nonce')

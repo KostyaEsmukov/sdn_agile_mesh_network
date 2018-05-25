@@ -5,11 +5,13 @@ import logging
 from collections import namedtuple
 from logging import getLogger
 
-from agile_mesh_network.common.models import TunnelModel, LayersDescriptionModel
+from agile_mesh_network.common.models import (
+    TunnelModel, LayersDescriptionRpcModel
+)
 from agile_mesh_network.common.rpc import (
     RpcBroadcast, RpcCommand, RpcSession, RpcUnixServer
 )
-from agile_mesh_network.negotiator.tunnel import PendingTunnel
+from agile_mesh_network.negotiator.tunnel import PendingTunnel, TunnelIntention
 
 logger = getLogger('negotiator')
 logging.basicConfig(level=logging.INFO)
@@ -44,7 +46,7 @@ class TunnelsState:
         return tunnel_model
 
     async def create_tunnel(self, src_mac, dst_mac, timeout,
-                            layers: LayersDescriptionModel):
+                            layers: LayersDescriptionRpcModel):
         pending_tunnel = PendingTunnel.tunnel_intention_for_initiator(
             src_mac, dst_mac, layers, timeout)
         tunnel_model = await self._create_pending_tunnel(pending_tunnel)
@@ -118,7 +120,7 @@ class RpcResponder:
         return {"tunnels": tunnels}
 
     async def _command_create_tunnel(self, src_mac, dst_mac, timeout, layers):
-        layers = LayersDescriptionModel(**layers)
+        layers = LayersDescriptionRpcModel(**layers)
         tunnel = await self._tunnels_state.create_tunnel(
             src_mac, dst_mac, timeout, layers)
         tunnels = self._tunnels_state.active_tunnels()

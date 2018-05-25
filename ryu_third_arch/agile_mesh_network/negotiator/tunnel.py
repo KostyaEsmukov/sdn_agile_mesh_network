@@ -4,7 +4,8 @@ from abc import ABCMeta, abstractmethod
 from typing import Awaitable, Tuple
 
 from agile_mesh_network.common.models import (
-    LayersList, TunnelModel, LayersDescriptionModel, NegotiationIntentionModel
+    LayersList, TunnelModel, LayersDescriptionModel, NegotiationIntentionModel,
+    LayersDescriptionRpcModel
 )
 from agile_mesh_network.negotiator.process_managers import ProcessManager
 from agile_mesh_network.negotiator.tunnel_protocols import (
@@ -69,19 +70,22 @@ class TunnelIntention(BaseTunnel):
                                          layers=layers)
 
     @classmethod
-    def from_negotiation_intention(cls, negotiation_intention: NegotiationIntentionModel
+    def from_negotiation_intention(cls, negotiation_intention: NegotiationIntentionModel,
+                                   protocol: str,
                                    ) -> Tuple['TunnelIntention', LayersDescriptionModel]:
         tunnel_intention = cls(src_mac=negotiation_intention.src_mac,
                                dst_mac=negotiation_intention.dst_mac,
                                layers=list(negotiation_intention.layers.keys()))
-        return tunnel_intention, negotiation_intention.layers
+        layers = LayersDescriptionModel(protocol=protocol,
+                                        layers=negotiation_intention.layers)
+        return tunnel_intention, layers
 
 
-class Tunnel:
+class Tunnel(BaseTunnel):
     def __init__(self, tunnel_intention: TunnelIntention,
                  process_manager: ProcessManager):
-        self.src_mac = tunnel_intention.src_mac
-        self.dst_mac = tunnel_intention.dst_mac
+        super().__init__(tunnel_intention.src_mac, tunnel_intention.dst_mac,
+                         tunnel_intention.layers)
         self.process_manager = process_manager
 
     @property
@@ -97,7 +101,8 @@ class PendingTunnel(metaclass=ABCMeta):
 
     @classmethod
     def tunnel_intention_for_initiator(cls, src_mac, dst_mac,
-                                       layers: LayersDescriptionModel, timeout) -> 'PendingTunnel':
+                                       layers: LayersDescriptionRpcModel,
+                                       timeout) -> 'PendingTunnel':
         tunnel_intention = TunnelIntention(src_mac, dst_mac,
                                            list(layers.layers.keys()))
         return InitiatorPendingTunnel(tunnel_intention, layers, timeout)
@@ -119,7 +124,7 @@ class PendingTunnel(metaclass=ABCMeta):
 
 
 class InitiatorPendingTunnel(PendingTunnel):
-    def __init__(self, tunnel_intention, layers: LayersDescriptionModel,
+    def __init__(self, tunnel_intention, layers: LayersDescriptionRpcModel,
                  timeout):
         super().__init__(tunnel_intention, layers)
         self._timeout = timeout
@@ -138,7 +143,7 @@ class InitiatorPendingTunnel(PendingTunnel):
             await ext_prot.fut_negotiated
             pm = ProcessManager.from_layers_initiator(
                 self.tunnel_intention.dst_mac, self._layers, pipe_context)
-            await pm.start(timeout)
+            await pm.start(self._timeout)
             return Tunnel(self.tunnel_intention, pm)
         except:
             pipe_context.close()
@@ -156,7 +161,7 @@ class ResponderPendingTunnel(PendingTunnel):
         await protocol.fut_intention_read
         # TODO validate MAC
         tunnel_intention, layers = TunnelIntention.from_negotiation_intention(
-            protocol.negotiation_intention)
+            protocol.negotiation_intention, protocol='tcp')  # TODO protocol
         return cls(tunnel_intention, layers, protocol)
 
     async def create_tunnel(self) -> Tunnel:

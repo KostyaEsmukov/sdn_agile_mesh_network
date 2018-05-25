@@ -2,7 +2,8 @@ import json
 from unittest import TestCase
 
 from agile_mesh_network.common.models import (
-    TunnelModel, LayersDescriptionModel, NegotiationIntentionModel
+    TunnelModel, LayersDescriptionModel, NegotiationIntentionModel,
+    LayersDescriptionRpcModel
 )
 
 TUNNEL_DATA = {
@@ -48,7 +49,21 @@ class ModelsTestCases(TestCase):
         json.dumps(data)  # must be serializable
 
     def test_layers(self):
-        mod = LayersDescriptionModel(**LAYERS_DESCRIPTION_DATA)
+        default_data = LAYERS_DESCRIPTION_DATA.copy()
+        default_data.pop('dest')
+
+        mod = LayersDescriptionModel(**default_data)
+
+        self.assertEqual(mod.protocol, default_data["protocol"])
+        with self.assertRaises(TypeError):
+            mod["protocol"]
+
+        data = mod.asdict()
+        self.assertDictEqual(data, default_data)
+        json.dumps(data)  # must be serializable
+
+    def test_layers_rpc(self):
+        mod = LayersDescriptionRpcModel(**LAYERS_DESCRIPTION_DATA)
 
         self.assertEqual(mod.protocol, LAYERS_DESCRIPTION_DATA["protocol"])
         with self.assertRaises(TypeError):

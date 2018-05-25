@@ -27,8 +27,14 @@ class TunnelModel:
 @dataclass
 class LayersDescriptionModel:
     protocol: str
-    dest: Any
     layers: Mapping[str, Any]
+
+    asdict = asdict
+
+
+@dataclass
+class LayersDescriptionRpcModel(LayersDescriptionModel):
+    dest: Any
 
     asdict = asdict
 

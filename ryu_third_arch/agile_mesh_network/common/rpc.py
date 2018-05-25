@@ -68,6 +68,10 @@ class RpcSession:
         self.msg_id_to_future.clear()
         self.transport.close()
 
+    @property
+    def is_closed(self):
+        return self.transport.is_closing()
+
     def _process_message(self, line):
         assert line
         msg_type, msg_id, name, kwargs_json = line.decode().split(':', 3)
