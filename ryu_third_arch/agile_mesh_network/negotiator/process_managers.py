@@ -1,9 +1,15 @@
 import asyncio
+import subprocess
+import socket
 from abc import ABCMeta, abstractmethod
+from contextlib import closing
 from typing import Tuple
 
 from agile_mesh_network.common.models import LayersDescriptionModel
 from agile_mesh_network.negotiator.tunnel_protocols import PipeContext
+from agile_mesh_network.common.async_utils import (
+    future_set_exception_silent, future_set_result_silent,
+)
 
 
 class ProcessManager(metaclass=ABCMeta):
@@ -46,34 +52,88 @@ class ProcessManager(metaclass=ABCMeta):
         pass
 
 
-class OpenvpnProcessManager(ProcessManager):
+class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
     """Manages openvpn processes."""
 
-    def __init__(self, dst_mac, protocol, remote: Tuple[str, int]):
+    _exec_path = 'openvpn'  # TODO
+
+    def __init__(self, dst_mac, openvpn_options,
+                 pipe_context: PipeContext):
+        self._process_transport = None
+        self.tun_dev_name = f'tap{dst_mac.replace(":", "")}'
+        self._pipe_context = pipe_context
+        # TODO options
         # TODO setup configs, certs
-        pass
+
+    async def _start_openvpn_process(self, args):
+        loop = asyncio.get_event_loop()
+        self._process_transport, _ = await loop.subprocess_exec(
+            lambda: OpenvpnProcessProtocol(self._pipe_context),
+            self._exec_path, *args,
+            stdin=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+    @property
+    def is_tunnel_active(self):
+        if self._pipe_context.is_closed:
+            return False
+        if self._process_transport is None:
+            return False
+        # TODO make this more granular (respect negotiation phase?)
+        return True
+
+    @property
+    def is_dead(self):
+        return self._pipe_context.is_closed
+
+    # TODO stop??
+
+
+class OpenvpnResponderProcessManager(BaseOpenvpnProcessManager):
 
     async def start(self, timeout=None):
-        logger.warning('Pretending to start openvpn!')
-        # TODO impl!
+        self._local_port = get_free_local_tcp_port()
+        await self._start_openvpn_process(self._build_process_args())
+        self.interior_protocol = await create_local_tcp_client(
+            self._pipe_context, self._local_port)
 
-    # @property
-    # def is_tunnel_active(self):
-    #     pass
+    def _build_process_args(self):
+        # Server with self._local_port
+        # TODO
+        return tuple()
 
-    # @property
-    # def is_dead(self):
-    #     pass
-    # TODO stop??
+
+class OpenvpnInitiatorProcessManager(BaseOpenvpnProcessManager):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._local_port = None
+
+    async def start(self, timeout=None):
+        protocol, self._local_port = await create_local_tcp_server(
+            self._pipe_context)
+        await self._start_openvpn_process(self._build_process_args())
+        await protocol.fut_connected
+
+    def _build_process_args(self):
+        # Client to self._local_port
+        # TODO
+        return tuple()
+
+
+def get_free_local_tcp_port():
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(('localhost', 0))
+        return s.getsockname()[1]
 
 
 async def create_local_tcp_client(pipe_context, local_dest_tcp_port, *,
                                   loop=None):
     loop = loop or asyncio.get_event_loop()
-    transport, _ = await loop.create_connection(
-        single_connection_factory(InteriorProtocol(pipe_context)),
+    protocol = InteriorProtocol(pipe_context)
+    await loop.create_connection(
+        single_connection_factory(protocol),
         '127.0.0.1', local_dest_tcp_port)
-    return transport
+    return protocol
 
 
 async def create_local_tcp_server(pipe_context, *, loop=None):
@@ -84,8 +144,7 @@ async def create_local_tcp_server(pipe_context, *, loop=None):
         '127.0.0.1')
     assert 1 == len(server.sockets)
     _, port = server.sockets[0].getsockname()
-    # TODO ?? server - wait until connected?
-    return server, port
+    return protocol, port
 
 
 def single_connection_factory(protocol):
@@ -105,13 +164,34 @@ class InteriorProtocol(asyncio.Protocol):
     def __init__(self, pipe_context: PipeContext):
         self.transport = None
         self.pipe_context = pipe_context
+        self.fut_connected = asyncio.Future()
+        pipe_context.add_close_callback(
+            lambda: future_set_exception_silent(
+                self.fut_connected, OSError('connection closed')))
 
     def connection_made(self, transport):
         self.transport = transport
         self.pipe_context.contribute_interior_transport(transport)
+        future_set_result_silent(self.fut_connected, None)
 
     def data_received(self, data):
         self.pipe_context.write_to_exterior(data)
 
     def connection_lost(self, exc):
+        self.pipe_context.close()
+
+
+class OpenvpnProcessProtocol(asyncio.SubprocessProtocol):
+    def __init__(self, pipe_context: PipeContext):
+        self.transport = None
+        self.pipe_context = pipe_context
+        pipe_context.add_closing
+        self.fut_exit = asyncio.Future()
+
+    def connection_made(self, transport):
+        self.transport = transport
+        self.pipe_context.add_closing(transport)
+
+    def process_exited(self):
+        self.fut_exit.set_result(None)
         self.pipe_context.close()

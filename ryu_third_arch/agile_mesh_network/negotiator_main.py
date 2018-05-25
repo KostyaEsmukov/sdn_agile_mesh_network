@@ -72,6 +72,7 @@ class TunnelsState:
                 await self._create_pending_tunnel(pending_tunnel)
             except:
                 protocol.pipe_context.close()
+                raise
 
         asyncio.ensure_future(task())
         return protocol

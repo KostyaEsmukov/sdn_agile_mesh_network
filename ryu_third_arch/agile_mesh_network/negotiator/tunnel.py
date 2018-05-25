@@ -22,11 +22,16 @@ class BaseTunnel(metaclass=ABCMeta):
     @property
     @abstractmethod
     def is_dead(self):
+        """Tunnel won't be active. This is a final state."""
         pass
 
     @property
     @abstractmethod
     def is_tunnel_active(self):
+        """Is tunnel truly alive? Might temporary be False when is_dead
+        is False -- which means that the tunnel is not alive, but might be
+        up soon.
+        """
         pass
 
     def model(self):

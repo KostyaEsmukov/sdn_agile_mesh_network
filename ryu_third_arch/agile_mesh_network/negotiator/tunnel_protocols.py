@@ -19,6 +19,7 @@ class PipeContext:
         self.interior_transport = None
         self._write_q = []
         self._close_callbacks = []
+        self.is_closed = False
 
     def contribute_exterior_transport(self, exterior_transport):
         assert self.exterior_transport is None
@@ -49,6 +50,8 @@ class PipeContext:
         self._close_callbacks.append(callback)
 
     def close(self):
+        logger.info('Closing pipe context')
+        self.is_closed = True
         for closing in self._closing_set:
             closing.close()
         self._closing_set.clear()

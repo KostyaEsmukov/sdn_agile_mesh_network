@@ -1,6 +1,7 @@
 import asyncio
 import tempfile
 import os
+from logging import getLogger
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -9,12 +10,19 @@ from agile_mesh_network.negotiator_main import (
 )
 from agile_mesh_network.common.rpc import RpcSession, RpcUnixClient
 from agile_mesh_network.common.models import LayersDescriptionModel
+from agile_mesh_network.negotiator.process_managers import (
+    BaseOpenvpnProcessManager, OpenvpnResponderProcessManager,
+    OpenvpnInitiatorProcessManager
+)
+
+logger = getLogger(__name__)
+RUN_TCP_PATH = os.path.join(os.path.dirname(__file__), 'bin', 'run_tcp.py')
 
 
 class IntegrationTestCase(TestCase):
     def setUp(self):
         self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(None)
+        asyncio.set_event_loop(self.loop)
 
     def tearDown(self):
         self.loop.close()
@@ -46,6 +54,12 @@ class IntegrationTestCase(TestCase):
                 loop.run_until_complete(tunnels_state.close_tunnels_wait())
                 loop.run_until_complete(rpc_responder.close_wait())
 
+    @patch.object(BaseOpenvpnProcessManager, '_exec_path', RUN_TCP_PATH)
+    @patch.object(OpenvpnResponderProcessManager, '_build_process_args',
+                  lambda self: ('--mode', 'server', '--port', f'{self._local_port}'))
+    @patch.object(OpenvpnInitiatorProcessManager, '_build_process_args',
+                  lambda self: ('--mode', 'client', '--port', f'{self._local_port}',
+                                '--data', "hi please don't change me"))
     def test_negotiation(self):
         loop = self.loop
         mac_a = "00:11:22:33:44:00"
@@ -97,7 +111,5 @@ class IntegrationTestCase(TestCase):
                 loop.run_until_complete(tunnels_state_b.close_tunnels_wait())
                 loop.run_until_complete(rpc_responder_a.close_wait())
                 loop.run_until_complete(rpc_responder_b.close_wait())
-
-
 
 
