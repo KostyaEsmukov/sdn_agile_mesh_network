@@ -12,6 +12,29 @@ from agile_mesh_network.common.models import NegotiationIntentionModel
 logger = getLogger(__name__)
 
 
+class NegotiationMessages:
+    @classmethod
+    def compose_negotiation(cls,
+                            negotiation_intention: NegotiationIntentionModel) -> bytes:
+        return json.dumps(negotiation_intention.asdict()).encode()
+
+    @classmethod
+    def parse_negotiation(cls, line: bytes) -> NegotiationIntentionModel:
+        return NegotiationIntentionModel(**json.loads(line.decode()))
+
+    @classmethod
+    def compose_ack(cls, negotiation_intention: NegotiationIntentionModel) -> bytes:
+        return b'ack' + negotiation_intention.nonce
+
+    @classmethod
+    def validate_ack(cls, line: bytes,
+                     negotiation_intention: NegotiationIntentionModel) -> str:
+        exp_ack = b'ack' + negotiation_intention.nonce
+        if line != exp_ack:
+            logger.error('Bad ack! Expected: %r. Received: %r', exp_ack, line)
+            raise ValueError('Invalid ack or nonce')
+
+
 class BaseExteriorProtocol(asyncio.Protocol, metaclass=ABCMeta):
     def __init__(self):
         self.interior_transport = None
@@ -53,9 +76,11 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
 
     def connection_made(self, transport):  # Protocol method
         self.transport = transport
-        # Send negotiation message.
+        self.write_negotiation()
+
+    def write_negotiation(self):
         line = self._enc_reader.encrypt_line(
-            json.dumps(self.negotiation_intention.asdict()).encode())
+            NegotiationMessages.compose_negotiation(self.negotiation_intention))
         self.transport.write(line + b'\n')
 
     def data_received(self, data):  # Protocol method
@@ -63,12 +88,11 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
             self._enc_reader.feed_data(data)
             # Read ack message.
             for line in self._enc_reader:
-                exp_ack = b'ack' + self.negotiation_intention.nonce
-                if line != exp_ack:
-                    logger.error('Bad ack! Expected: %r. Received: %r', exp_ack, line)
+                try:
+                    NegotiationMessages.validate_ack(line, self.negotiation_intention)
+                except Exception as e:
                     self.close()
-                    future_set_exception_silent(self.fut_negotiated,
-                                                OSError('bad ack'))
+                    future_set_exception_silent(self.fut_negotiated, e)
                     return
                 data = self._enc_reader.buf
                 self.is_negotiated = True
@@ -86,24 +110,6 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
         super().close()
 
 
-class InteriorProtocol(asyncio.Protocol):
-
-    def __init__(self, exterior_protocol):
-        self.transport = None
-        self.exterior_protocol = exterior_protocol
-
-    def connection_made(self, transport):
-        self.transport = transport
-        self.exterior_protocol.contribute_interior_transport(transport)
-
-    def data_received(self, data):
-        self.exterior_protocol.write(data)
-
-    def connection_lost(self, exc):
-        self.transport.close()
-        self.exterior_protocol.close()
-
-
 class ResponderExteriorTcpProtocol(BaseExteriorProtocol):
     def __init__(self):
         super().__init__()
@@ -114,12 +120,16 @@ class ResponderExteriorTcpProtocol(BaseExteriorProtocol):
     def connection_made(self, transport):  # Protocol method
         self.transport = transport
 
+    def write_ack(self):
+        line = self._enc_reader.encrypt_line(
+            NegotiationMessages.compose_ack(self.negotiation_intention))
+        self.transport.write(line + b'\n')
+
     def data_received(self, data):  # Protocol method
         if not self.is_intention_read:
             self._enc_reader.feed_data(data)
             for line in self._enc_reader:
-                self.negotiation_intention = \
-                    NegotiationIntentionModel(**json.loads(line.decode()))
+                self.negotiation_intention = NegotiationMessages.parse_negotiation(line)
                 data = self._enc_reader.buf
                 self.is_intention_read = True
                 future_set_result_silent(self.fut_intention_read, None)

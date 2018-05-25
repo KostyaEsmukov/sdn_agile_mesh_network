@@ -6,9 +6,9 @@ from typing import Awaitable, Tuple
 from agile_mesh_network.common.models import (
     LayersList, TunnelModel, LayersDescriptionModel, NegotiationIntentionModel
 )
+from agile_mesh_network.negotiator.process_managers import ProcessManager
 from agile_mesh_network.negotiator.tunnel_protocols import (
     InitiatorExteriorTcpProtocol, ResponderExteriorTcpProtocol,
-    InteriorProtocol
 )
 
 
@@ -72,22 +72,19 @@ class TunnelIntention(BaseTunnel):
         return tunnel_intention, negotiation_intention.layers
 
 
-class Tunnel:  # TODO
-    def __init__(self, src_mac, dst_mac, process_manager):
-        self.src_mac = src_mac
-        self.dst_mac = dst_mac
-        self.process_manager = process_manager  # !!!
+class Tunnel:
+    def __init__(self, tunnel_intention: TunnelIntention,
+                 process_manager: ProcessManager):
+        self.src_mac = tunnel_intention.src_mac
+        self.dst_mac = tunnel_intention.dst_mac
+        self.process_manager = process_manager
 
     @property
     def is_dead(self):
-        """A final state. Tunnel won't be alive anymore.
-        It needs to be stopped.
-        """
         return self.process_manager.is_dead
 
     @property
     def is_tunnel_active(self):
-        """Tunnel is alive."""
         return self.process_manager.is_tunnel_active
 
 
@@ -131,72 +128,32 @@ class InitiatorPendingTunnel(PendingTunnel):
             # TODO handle close?
 
             await ext_prot.fut_negotiated
-            server = await loop.create_server(lambda: InteriorProtocol(ext_prot),
-                                              '127.0.0.1')
-
-            assert 1 == len(server.sockets)
-            _, port = server.sockets[0].getsockname()
-            # TODO other layers
-            # TODO below !!!!
-            pm = OpenvpnProcessManager(dst_mac, **layers['openvpn'])
-            lt = LocalTunnel(src_mac, dst_mac, pm)
+            pm = ProcessManager.from_layers_initiator(
+                self.tunnel_intention.dst_mac, self._layers, ext_prot)
             await pm.start(timeout)
+            return Tunnel(self.tunnel_intention, pm)
         except:
             ext_prot.close()
             raise
 
 
 class ResponderPendingTunnel(PendingTunnel):
+    def __init__(self, tunnel_intention, layers: LayersDescriptionModel,
+                 protocol: ResponderExteriorTcpProtocol):
+        super().__init__(tunnel_intention, layers)
+        self._protocol = protocol
 
     @classmethod
-    async def negotiate(cls, protocol: 'ResponderExteriorTcpProtocol') -> PendingTunnel:
+    async def negotiate(cls, protocol: ResponderExteriorTcpProtocol) -> PendingTunnel:
         await protocol.fut_intention_read
         # TODO validate MAC
         tunnel_intention, layers = TunnelIntention.from_negotiation_intention(
             protocol.negotiation_intention)
-        return cls(tunnel_intention, layers)
+        return cls(tunnel_intention, layers, protocol)
 
     async def create_tunnel(self, *, loop) -> Tunnel:
         pm = ProcessManager.from_layers_responder(
-            self.tunnel_intention.dst_mac, self._layers)
+            self.tunnel_intention.dst_mac, self._layers, self._protocol)
         await pm.start()  # TODO timeout??
-        # TODO connect to ovpn + pipe
-        # TODO send ack
-        pass
-
-
-class ProcessManager(metaclass=ABCMeta):
-    @staticmethod
-    def from_layers_responder(dst_mac, layers: LayersDescriptionModel) -> 'TPM':
-        # TODO start ovpn
-        pass
-
-    @abstractmethod
-    async def start(self, timeout):
-        pass
-
-
-class OpenvpnProcessManager(ProcessManager):
-    """Manages openvpn processes."""
-
-    def __init__(self, dst_mac, protocol, remote: Tuple[str, int]):
-        # TODO setup configs, certs
-        pass
-
-    async def start(self, timeout=None):
-        logger.warning('Pretending to start openvpn!')
-        # TODO impl!
-
-    # @property
-    # def is_tunnel_active(self):
-    #     pass
-
-    # @property
-    # def is_dead(self):
-    #     pass
-    # TODO stop??
-
-
-
-
-
+        self._protocol.write_ack()
+        return Tunnel(self.tunnel_intention, pm)
