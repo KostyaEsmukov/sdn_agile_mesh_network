@@ -35,6 +35,10 @@ class BaseTunnel(metaclass=ABCMeta):
         """
         pass
 
+    @abstractmethod
+    def close(self):
+        pass
+
     def model(self):
         return TunnelModel(src_mac=self.src_mac, dst_mac=self.dst_mac,
                            layers=self.layers, is_dead=self.is_dead,
@@ -63,6 +67,9 @@ class TunnelIntention(BaseTunnel):
     @property
     def is_tunnel_active(self):
         return False
+
+    def close(self):
+        pass  # TODO
 
     def to_negotiation_intention(self, layers: LayersDescriptionModel):
         return NegotiationIntentionModel(src_mac=self.src_mac,
@@ -99,6 +106,9 @@ class Tunnel(BaseTunnel):
     @property
     def is_tunnel_active(self):
         return self.process_manager.is_tunnel_active
+
+    def close(self):
+        self.process_manager.close()
 
 
 class PendingTunnel(metaclass=ABCMeta):

@@ -51,6 +51,8 @@ class PipeContext:
 
     def close(self):
         logger.info('Closing pipe context')
+        # TODO close process first, wait until it's terminated,
+        # then close sockets.
         self.is_closed = True
         for closing in self._closing_set:
             closing.close()

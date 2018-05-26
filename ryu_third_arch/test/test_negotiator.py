@@ -44,8 +44,8 @@ class IntegrationTestCase(TestCase):
 
             async def f():
                 async with TunnelsState() as tunnels_state, \
-                        RpcResponder(tunnels_state, rpc_sock_path) as rpc_responder:
-                    rpc_c = RpcUnixClient(rpc_sock_path, command_cb)
+                        RpcResponder(tunnels_state, rpc_sock_path) as rpc_responder, \
+                        RpcUnixClient(rpc_sock_path, command_cb) as rpc_c:
                     await rpc_c.start()
                     rpc = rpc_c.session
                     resp = await asyncio.wait_for(
@@ -92,14 +92,14 @@ class IntegrationTestCase(TestCase):
                                      os.path.join(td, 'a.sock')) as rpc_responder_a, \
                         RpcResponder(tunnels_state_b,
                                      os.path.join(td, 'b.sock')) as rpc_responder_b, \
-                        TcpExteriorServer(tunnels_state_b) as tcp_server_b:
+                        TcpExteriorServer(tunnels_state_b) as tcp_server_b, \
+                        RpcUnixClient(os.path.join(td, 'a.sock'),
+                                      command_cb_factory(rpc_commands_a)) as rpc_a_c, \
+                        RpcUnixClient(os.path.join(td, 'b.sock'),
+                                      command_cb_factory(rpc_commands_b)) as rpc_b_c:
                     self.assertIsNotNone(tcp_server_b.tcp_port)
 
                     # Setup RPC
-                    rpc_a_c = RpcUnixClient(os.path.join(td, 'a.sock'),
-                                            command_cb_factory(rpc_commands_a))
-                    rpc_b_c = RpcUnixClient(os.path.join(td, 'b.sock'),
-                                            command_cb_factory(rpc_commands_b))
                     await rpc_a_c.start()
                     await rpc_b_c.start()
                     rpc_a = rpc_a_c.session

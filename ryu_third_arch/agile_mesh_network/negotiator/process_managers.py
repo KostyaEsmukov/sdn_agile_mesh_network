@@ -85,7 +85,8 @@ class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
     def is_dead(self):
         return self._pipe_context.is_closed
 
-    # TODO stop??
+    def close(self):
+        self._pipe_context.close()
 
 
 class OpenvpnResponderProcessManager(BaseOpenvpnProcessManager):

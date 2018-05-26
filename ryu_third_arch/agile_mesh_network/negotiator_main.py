@@ -71,7 +71,9 @@ class TunnelsState:
     # TODO notify via RPC when a tunnel is destroyed
 
     async def close_tunnels_wait(self):
-        pass  # TODO
+        for tunnel in self.tunnels:
+            tunnel.close()
+        # TODO ?? wait until closed?
 
     def create_tunnel_from_protocol(self) -> asyncio.Protocol:
         protocol, aw_pending_tunnel = \
