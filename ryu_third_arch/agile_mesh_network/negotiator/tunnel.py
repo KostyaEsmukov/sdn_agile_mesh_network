@@ -73,8 +73,12 @@ class TunnelIntention(BaseTunnel):
     def from_negotiation_intention(cls, negotiation_intention: NegotiationIntentionModel,
                                    protocol: str,
                                    ) -> Tuple['TunnelIntention', LayersDescriptionModel]:
-        tunnel_intention = cls(src_mac=negotiation_intention.src_mac,
-                               dst_mac=negotiation_intention.dst_mac,
+        # src_mac of negotiation represents the MAC address of the initiator.
+        # When converting negotiation to a tunnel (on responder side),
+        # we need to swap them, as from the responder's point of view
+        # the dst should be the initiator's MAC, not the src.
+        tunnel_intention = cls(src_mac=negotiation_intention.dst_mac,
+                               dst_mac=negotiation_intention.src_mac,
                                layers=list(negotiation_intention.layers.keys()))
         layers = LayersDescriptionModel(protocol=protocol,
                                         layers=negotiation_intention.layers)

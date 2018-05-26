@@ -119,8 +119,13 @@ class IntegrationTestCase(TestCase):
                         ).asdict()
                     }))
 
-                tunnel_data = {
+                tunnel_data_a = {
                     "src_mac": mac_a, "dst_mac": mac_b,
+                    "is_dead": False, "is_tunnel_active": False,
+                    "layers": ["openvpn"],
+                }
+                tunnel_data_b = {
+                    "src_mac": mac_b, "dst_mac": mac_a,
                     "is_dead": False, "is_tunnel_active": False,
                     "layers": ["openvpn"],
                 }
@@ -128,18 +133,19 @@ class IntegrationTestCase(TestCase):
                 # Issue another command while the tunnel creation is in progress
                 tunnels = await asyncio.wait_for(
                     rpc_a.issue_command("dump_tunnels_state"), timeout=0.5)
-                self.assertDictEqual(tunnels, {"tunnels": [tunnel_data]})
+                self.assertDictEqual(tunnels, {"tunnels": [tunnel_data_a]})
 
                 # Wait until tunnel is created
                 resp = await asyncio.wait_for(create_tunnel_future, timeout=3)
-                tunnel_data['is_tunnel_active'] = True
-                self.assertDictEqual(resp, {"tunnel": tunnel_data,
-                                            "tunnels": [tunnel_data]})
+                tunnel_data_a['is_tunnel_active'] = True
+                tunnel_data_b['is_tunnel_active'] = True
+                self.assertDictEqual(resp, {"tunnel": tunnel_data_a,
+                                            "tunnels": [tunnel_data_a]})
 
                 # Ensure that responder has the same view
                 tunnels = await asyncio.wait_for(
                     rpc_b.issue_command("dump_tunnels_state"), timeout=0.5)
-                self.assertDictEqual(tunnels, {"tunnels": [tunnel_data]})
+                self.assertDictEqual(tunnels, {"tunnels": [tunnel_data_b]})
 
                 # Verify that the data was correctly piped
                 self.assertSetEqual(set(openvpn_stdout.values()),
