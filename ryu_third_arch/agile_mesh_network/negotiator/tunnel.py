@@ -109,14 +109,14 @@ class PendingTunnel(metaclass=ABCMeta):
                                        timeout) -> 'PendingTunnel':
         tunnel_intention = TunnelIntention(src_mac, dst_mac,
                                            list(layers.layers.keys()))
-        return InitiatorPendingTunnel(tunnel_intention, layers, timeout)
+        return _InitiatorPendingTunnel(tunnel_intention, layers, timeout)
 
     @classmethod
     def tunnel_intention_for_responder(cls) -> Tuple[asyncio.Protocol,
                                                      Awaitable['PendingTunnel']]:
         pipe_context = PipeContext()
         protocol = ResponderExteriorTcpProtocol(pipe_context)
-        return protocol, ResponderPendingTunnel.negotiate(protocol)
+        return protocol, _ResponderPendingTunnel.negotiate(protocol)
 
     def __init__(self, tunnel_intention, layers: LayersDescriptionModel):
         self.tunnel_intention = tunnel_intention
@@ -127,7 +127,7 @@ class PendingTunnel(metaclass=ABCMeta):
         pass
 
 
-class InitiatorPendingTunnel(PendingTunnel):
+class _InitiatorPendingTunnel(PendingTunnel):
     def __init__(self, tunnel_intention, layers: LayersDescriptionRpcModel,
                  timeout):
         super().__init__(tunnel_intention, layers)
@@ -140,21 +140,16 @@ class InitiatorPendingTunnel(PendingTunnel):
         pipe_context = PipeContext()
         neg = self.tunnel_intention.to_negotiation_intention(self._layers.layers)
         ext_prot = InitiatorExteriorTcpProtocol(pipe_context, neg)
-        try:
+        with pipe_context:
             await loop.create_connection(lambda: ext_prot, host, port)
-            # TODO handle close?
-
             await ext_prot.fut_negotiated
             pm = ProcessManager.from_layers_initiator(
                 self.tunnel_intention.dst_mac, self._layers, pipe_context)
             await pm.start(self._timeout)
             return Tunnel(self.tunnel_intention, pm)
-        except:
-            pipe_context.close()
-            raise
 
 
-class ResponderPendingTunnel(PendingTunnel):
+class _ResponderPendingTunnel(PendingTunnel):
     def __init__(self, tunnel_intention, layers: LayersDescriptionModel,
                  protocol: ResponderExteriorTcpProtocol):
         super().__init__(tunnel_intention, layers)
@@ -162,15 +157,18 @@ class ResponderPendingTunnel(PendingTunnel):
 
     @classmethod
     async def negotiate(cls, protocol: ResponderExteriorTcpProtocol) -> PendingTunnel:
-        await protocol.fut_intention_read
-        # TODO validate MAC
-        tunnel_intention, layers = TunnelIntention.from_negotiation_intention(
-            protocol.negotiation_intention, protocol='tcp')  # TODO protocol
-        return cls(tunnel_intention, layers, protocol)
+        with protocol.pipe_context:
+            await protocol.fut_intention_read
+            # TODO validate MAC
+            tunnel_intention, layers = TunnelIntention.from_negotiation_intention(
+                protocol.negotiation_intention, protocol='tcp')  # TODO protocol
+            return cls(tunnel_intention, layers, protocol)
 
     async def create_tunnel(self) -> Tunnel:
-        pm = ProcessManager.from_layers_responder(
-            self.tunnel_intention.dst_mac, self._layers, self._protocol.pipe_context)
-        await pm.start()  # TODO timeout??
-        self._protocol.write_ack()
-        return Tunnel(self.tunnel_intention, pm)
+        with self._protocol.pipe_context:
+            pm = ProcessManager.from_layers_responder(
+                self.tunnel_intention.dst_mac, self._layers,
+                self._protocol.pipe_context)
+            await pm.start()  # TODO timeout??
+            self._protocol.write_ack()
+            return Tunnel(self.tunnel_intention, pm)

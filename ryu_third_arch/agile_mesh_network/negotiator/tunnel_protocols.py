@@ -59,6 +59,13 @@ class PipeContext:
             callback()
         self._close_callbacks.clear()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        if exc_type:
+            self.close()
+
 
 class NegotiationMessages:
     @classmethod

@@ -5,6 +5,8 @@ import logging
 from collections import namedtuple
 from logging import getLogger
 
+from async_exit_stack import AsyncExitStack
+
 from agile_mesh_network.common.models import (
     TunnelModel, LayersDescriptionRpcModel
 )
@@ -23,6 +25,13 @@ class TunnelsState:
     def __init__(self):
         self.tunnel_created_callback = None
         self.tunnels = {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, exc_tb):
+        logger.info(f'Closing all tunnels...')
+        await self.close_tunnels_wait()
 
     async def _create_pending_tunnel(self, pending_tunnel):
         tunnel_intention = pending_tunnel.tunnel_intention
@@ -69,12 +78,9 @@ class TunnelsState:
             PendingTunnel.tunnel_intention_for_responder()
 
         async def task():
-            try:
+            with protocol.pipe_context:
                 pending_tunnel = await aw_pending_tunnel
                 await self._create_pending_tunnel(pending_tunnel)
-            except:
-                protocol.pipe_context.close()
-                raise
 
         asyncio.ensure_future(task())
         return protocol
@@ -86,7 +92,9 @@ class RpcResponder:
     # socket_path = '/Users/kostya/amn_negotiator.sock'
     socket_path = '/var/run/amn_negotiator.sock'
 
-    def __init__(self, tunnels_state):
+    def __init__(self, tunnels_state, socket_path=None):
+        if socket_path:
+            self.socket_path = socket_path
         self.rpc_server = RpcUnixServer(self.socket_path,
                                         self._handle_command)
         self._tunnels_state = tunnels_state
@@ -94,6 +102,15 @@ class RpcResponder:
 
     def __str__(self):
         return f"RpcResponder server at {self.socket_path}"
+
+    async def __aenter__(self):
+        logger.info(f'Starting {self}')
+        await self.start_server()
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, exc_tb):
+        logger.info(f'Closing {self}...')
+        await self.close_wait()
 
     async def start_server(self):
         await self.rpc_server.start()
@@ -168,6 +185,15 @@ class TcpExteriorServer:
     def __str__(self):
         return f"TcpExteriorServer server at {self.tcp_host}:{self.tcp_port}"
 
+    async def __aenter__(self):
+        logger.info(f'Starting {self}')
+        await self.start_server()
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, exc_tb):
+        logger.info(f'Closing {self}...')
+        await self.close_wait()
+
     async def start_server(self):
         loop = asyncio.get_event_loop()
         self.server = await loop.create_server(
@@ -182,19 +208,21 @@ class TcpExteriorServer:
         await self.server.wait_closed()
 
 
+async def main_async_exit_stack(tcp_port):
+    stack = AsyncExitStack()
+    tunnels_state = await stack.enter_async_context(TunnelsState())
+    await stack.enter_async_context(RpcResponder(tunnels_state))
+    await stack.enter_async_context(
+        TcpExteriorServer(tunnels_state, tcp_port=tcp_port))
+    return stack
+
+
 def main():
     logger.info('Starting...')
     loop = asyncio.get_event_loop()
 
-    tunnels_state = TunnelsState()
-
-    rpc_responder = RpcResponder(tunnels_state)
-    logger.info(f'Starting {rpc_responder}')
-    loop.run_until_complete(rpc_responder.start_server())
-
-    tcp_server = TcpExteriorServer(tunnels_state, tcp_port=1194)
-    logger.info(f'Starting {tcp_server}')
-    loop.run_until_complete(tcp_server.start_server())
+    # TODO tcp port from args?
+    stack = loop.run_until_complete(main_async_exit_stack(tcp_port=1194))
 
     try:
         logger.info('Running forever...')
@@ -203,12 +231,8 @@ def main():
         # TODO graceful shutdown
         pass
 
-    logger.info(f'Closing {tcp_server}...')
-    loop.run_until_complete(tcp_server.close_wait())
-    logger.info(f'Closing all tunnels...')
-    loop.run_until_complete(tunnels_state.close_tunnels_wait())
-    logger.info(f'Closing {rpc_responder}...')
-    loop.run_until_complete(rpc_responder.close_wait())
+    loop.run_until_complete(stack.aclose())
+    loop.run_until_complete(loop.shutdown_asyncgens())
     loop.close()
 
 
