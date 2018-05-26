@@ -9,7 +9,7 @@ from unittest.mock import patch
 from agile_mesh_network.negotiator_main import (
     RpcResponder, TunnelsState, TcpExteriorServer
 )
-from agile_mesh_network.common.rpc import RpcSession, RpcUnixClient
+from agile_mesh_network.common.rpc import RpcSession, RpcUnixClient, RpcBroadcast
 from agile_mesh_network.common.models import LayersDescriptionRpcModel
 from agile_mesh_network.negotiator.process_managers import (
     BaseOpenvpnProcessManager, OpenvpnResponderProcessManager,
@@ -24,6 +24,8 @@ RUN_TCP_SERVER_DATA = "hi please don't change my response"
 
 
 class IntegrationTestCase(TestCase):
+    maxDiff = None  # unittest: show full diff on assertion failure
+
     def setUp(self):
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
@@ -95,14 +97,20 @@ class IntegrationTestCase(TestCase):
             loop.run_until_complete(rpc_responder_b.start_server())
             loop.run_until_complete(tcp_server_b.start_server())
 
-            async def command_cb(session, msg):
-                logger.info('Command! %r', msg)
-                # assert False
+            rpc_commands_a = []
+            rpc_commands_b = []
+
+            def command_cb_factory(commands_container):
+                async def command_cb(session, msg):
+                    commands_container.append(msg)
+                return command_cb
 
             async def f():
                 # Setup RPC
-                rpc_a_c = RpcUnixClient(os.path.join(td, 'a.sock'), command_cb)
-                rpc_b_c = RpcUnixClient(os.path.join(td, 'b.sock'), command_cb)
+                rpc_a_c = RpcUnixClient(os.path.join(td, 'a.sock'),
+                                        command_cb_factory(rpc_commands_a))
+                rpc_b_c = RpcUnixClient(os.path.join(td, 'b.sock'),
+                                        command_cb_factory(rpc_commands_b))
                 await rpc_a_c.start()
                 await rpc_b_c.start()
                 rpc_a = rpc_a_c.session
@@ -146,6 +154,16 @@ class IntegrationTestCase(TestCase):
                 tunnels = await asyncio.wait_for(
                     rpc_b.issue_command("dump_tunnels_state"), timeout=0.5)
                 self.assertDictEqual(tunnels, {"tunnels": [tunnel_data_b]})
+
+                # Check RPC broadcasts
+                self.assertListEqual(rpc_commands_a, [
+                    RpcBroadcast(name='tunnel_created',
+                                 kwargs={'tunnel': tunnel_data_a,
+                                         'tunnels': [tunnel_data_a]})])
+                self.assertListEqual(rpc_commands_b, [
+                    RpcBroadcast(name='tunnel_created',
+                                 kwargs={'tunnel': tunnel_data_b,
+                                         'tunnels': [tunnel_data_b]})])
 
                 # Verify that the data was correctly piped
                 self.assertSetEqual(set(openvpn_stdout.values()),

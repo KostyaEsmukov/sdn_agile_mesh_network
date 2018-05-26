@@ -22,6 +22,14 @@ class BaseRpcMessage(metaclass=ABCMeta):
         return (f'{type(self).__name__}(name={repr(self.name)}, '
                 f'kwargs={repr(self.kwargs)})')
 
+    def __eq__(self, other):
+        if not other or not isinstance(other, type(self)):
+            return False
+        return self.name == other.name and self.kwargs == other.kwargs
+
+    def __ne__(self, other):
+        return not (self == other)
+
 
 class RpcCommand(BaseRpcMessage):
     def __init__(self, name, kwargs, transport, msg_id):
