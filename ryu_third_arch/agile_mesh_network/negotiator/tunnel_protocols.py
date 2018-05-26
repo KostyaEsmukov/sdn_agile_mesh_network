@@ -4,15 +4,16 @@ from abc import ABCMeta
 from logging import getLogger
 
 from agile_mesh_network.common.async_utils import (
-    future_set_result_silent, future_set_exception_silent
+    future_set_exception_silent, future_set_result_silent
 )
-from agile_mesh_network.common.reader import EncryptedNewlineReader
 from agile_mesh_network.common.models import NegotiationIntentionModel
+from agile_mesh_network.common.reader import EncryptedNewlineReader
 
 logger = getLogger(__name__)
 
 
 class PipeContext:
+
     def __init__(self):
         self._closing_set = set()
         self.exterior_transport = None
@@ -43,14 +44,14 @@ class PipeContext:
         self.interior_transport.write(data)
 
     def add_closing(self, closing):
-        assert hasattr(closing, 'close')
+        assert hasattr(closing, "close")
         self._closing_set.add(closing)
 
     def add_close_callback(self, callback):
         self._close_callbacks.append(callback)
 
     def close(self):
-        logger.info('Closing pipe context')
+        logger.info("Closing pipe context")
         # TODO close process first, wait until it's terminated,
         # then close sockets.
         self.is_closed = True
@@ -70,9 +71,11 @@ class PipeContext:
 
 
 class NegotiationMessages:
+
     @classmethod
-    def compose_negotiation(cls,
-                            negotiation_intention: NegotiationIntentionModel) -> bytes:
+    def compose_negotiation(
+        cls, negotiation_intention: NegotiationIntentionModel
+    ) -> bytes:
         return json.dumps(negotiation_intention.asdict()).encode()
 
     @classmethod
@@ -81,18 +84,20 @@ class NegotiationMessages:
 
     @classmethod
     def compose_ack(cls, negotiation_intention: NegotiationIntentionModel) -> bytes:
-        return b'ack' + negotiation_intention.nonce.encode()
+        return b"ack" + negotiation_intention.nonce.encode()
 
     @classmethod
-    def validate_ack(cls, line: bytes,
-                     negotiation_intention: NegotiationIntentionModel) -> str:
-        exp_ack = b'ack' + negotiation_intention.nonce.encode()
+    def validate_ack(
+        cls, line: bytes, negotiation_intention: NegotiationIntentionModel
+    ) -> str:
+        exp_ack = b"ack" + negotiation_intention.nonce.encode()
         if line != exp_ack:
-            logger.error('Bad ack! Expected: %r. Received: %r', exp_ack, line)
-            raise ValueError('Invalid ack or nonce')
+            logger.error("Bad ack! Expected: %r. Received: %r", exp_ack, line)
+            raise ValueError("Invalid ack or nonce")
 
 
 class BaseExteriorProtocol(asyncio.Protocol, metaclass=ABCMeta):
+
     def __init__(self, pipe_context: PipeContext):
         self.interior_transport = None
         self._enc_reader = EncryptedNewlineReader()
@@ -103,20 +108,26 @@ class BaseExteriorProtocol(asyncio.Protocol, metaclass=ABCMeta):
         self.pipe_context.contribute_exterior_transport(transport)
 
     def connection_lost(self, exc):
-        logger.info('%s: connection lost', type(self).__name__, exc_info=exc)
+        logger.info("%s: connection lost", type(self).__name__, exc_info=exc)
         self.pipe_context.close()
 
 
 class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
-    def __init__(self, pipe_context: PipeContext,
-                 negotiation_intention: NegotiationIntentionModel):
+
+    def __init__(
+        self,
+        pipe_context: PipeContext,
+        negotiation_intention: NegotiationIntentionModel,
+    ):
         super().__init__(pipe_context)
         self.negotiation_intention = negotiation_intention
         self.is_negotiated = False
         self.fut_negotiated = asyncio.Future()
         pipe_context.add_close_callback(
             lambda: future_set_exception_silent(
-                self.fut_negotiated, OSError('connection closed')))
+                self.fut_negotiated, OSError("connection closed")
+            )
+        )
 
     def connection_made(self, transport):
         super().connection_made(transport)
@@ -124,8 +135,9 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
 
     def _write_negotiation(self):
         line = self._enc_reader.encrypt_line(
-            NegotiationMessages.compose_negotiation(self.negotiation_intention))
-        self.transport.write(line + b'\n')
+            NegotiationMessages.compose_negotiation(self.negotiation_intention)
+        )
+        self.transport.write(line + b"\n")
 
     def data_received(self, data):
         if not self.is_negotiated:
@@ -150,6 +162,7 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
 
 
 class ResponderExteriorTcpProtocol(BaseExteriorProtocol):
+
     def __init__(self, pipe_context: PipeContext):
         super().__init__(pipe_context)
         self.negotiation_intention = None
@@ -157,12 +170,15 @@ class ResponderExteriorTcpProtocol(BaseExteriorProtocol):
         self.fut_intention_read = asyncio.Future()
         pipe_context.add_close_callback(
             lambda: future_set_exception_silent(
-                self.fut_intention_read, OSError('connection closed')))
+                self.fut_intention_read, OSError("connection closed")
+            )
+        )
 
     def write_ack(self):
         line = self._enc_reader.encrypt_line(
-            NegotiationMessages.compose_ack(self.negotiation_intention))
-        self.transport.write(line + b'\n')
+            NegotiationMessages.compose_ack(self.negotiation_intention)
+        )
+        self.transport.write(line + b"\n")
 
     def data_received(self, data):
         if not self.is_intention_read:

@@ -1,5 +1,3 @@
-
-
 def future_set_result_silent(fut, result):
     if not fut.done():
         fut.set_result(result)

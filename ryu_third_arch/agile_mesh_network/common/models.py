@@ -1,8 +1,8 @@
-import os
 import base64
-from typing import Any, Sequence, Mapping
+import os
+from typing import Any, Mapping, Sequence
 
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 
 
 def random_string():

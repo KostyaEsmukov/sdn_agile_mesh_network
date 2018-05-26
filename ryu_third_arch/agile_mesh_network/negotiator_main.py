@@ -2,20 +2,14 @@
 
 import asyncio
 import logging
-from collections import namedtuple
 from logging import getLogger
 
+from agile_mesh_network.common.models import LayersDescriptionRpcModel, TunnelModel
+from agile_mesh_network.common.rpc import RpcBroadcast, RpcCommand, RpcUnixServer
+from agile_mesh_network.negotiator.tunnel import PendingTunnel, TunnelIntention
 from async_exit_stack import AsyncExitStack
 
-from agile_mesh_network.common.models import (
-    TunnelModel, LayersDescriptionRpcModel
-)
-from agile_mesh_network.common.rpc import (
-    RpcBroadcast, RpcCommand, RpcSession, RpcUnixServer
-)
-from agile_mesh_network.negotiator.tunnel import PendingTunnel, TunnelIntention
-
-logger = getLogger('negotiator')
+logger = getLogger("negotiator")
 logging.basicConfig(level=logging.INFO)
 
 
@@ -30,7 +24,7 @@ class TunnelsState:
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
-        logger.info(f'Closing all tunnels...')
+        logger.info(f"Closing all tunnels...")
         await self.close_tunnels_wait()
 
     async def _create_pending_tunnel(self, pending_tunnel):
@@ -41,8 +35,7 @@ class TunnelsState:
             if old_tunnel.is_dead:
                 self.tunnels.pop(old_tunnel)
             else:
-                raise ValueError(f"tunnel {src_mac}<->{dst_mac} is already "
-                                 "created")
+                raise ValueError(f"tunnel {old_tunnel} is already created")
         # Prevent concurrent tunnel creations.
         self.tunnels[tunnel_intention] = tunnel_intention
         tunnel = await pending_tunnel.create_tunnel()
@@ -54,10 +47,12 @@ class TunnelsState:
             await self.tunnel_created_callback(tunnel_model)
         return tunnel_model
 
-    async def create_tunnel(self, src_mac, dst_mac, timeout,
-                            layers: LayersDescriptionRpcModel):
+    async def create_tunnel(
+        self, src_mac, dst_mac, timeout, layers: LayersDescriptionRpcModel
+    ):
         pending_tunnel = PendingTunnel.tunnel_intention_for_initiator(
-            src_mac, dst_mac, layers, timeout)
+            src_mac, dst_mac, layers, timeout
+        )
         tunnel_model = await self._create_pending_tunnel(pending_tunnel)
         return tunnel_model
 
@@ -76,8 +71,7 @@ class TunnelsState:
         # TODO ?? wait until closed?
 
     def create_tunnel_from_protocol(self) -> asyncio.Protocol:
-        protocol, aw_pending_tunnel = \
-            PendingTunnel.tunnel_intention_for_responder()
+        protocol, aw_pending_tunnel = PendingTunnel.tunnel_intention_for_responder()
 
         async def task():
             with protocol.pipe_context:
@@ -92,13 +86,12 @@ class RpcResponder:
     """Provides RPC to the ryu app."""
 
     # socket_path = '/Users/kostya/amn_negotiator.sock'
-    socket_path = '/var/run/amn_negotiator.sock'
+    socket_path = "/var/run/amn_negotiator.sock"
 
     def __init__(self, tunnels_state, socket_path=None):
         if socket_path:
             self.socket_path = socket_path
-        self.rpc_server = RpcUnixServer(self.socket_path,
-                                        self._handle_command)
+        self.rpc_server = RpcUnixServer(self.socket_path, self._handle_command)
         self._tunnels_state = tunnels_state
         tunnels_state.register_tunnel_created_callback(self.notify_tunnel_created)
 
@@ -106,12 +99,12 @@ class RpcResponder:
         return f"RpcResponder server at {self.socket_path}"
 
     async def __aenter__(self):
-        logger.info(f'Starting {self}')
+        logger.info(f"Starting {self}")
         await self.start_server()
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
-        logger.info(f'Closing {self}...')
+        logger.info(f"Closing {self}...")
         await self.close_wait()
 
     async def start_server(self):
@@ -124,7 +117,7 @@ class RpcResponder:
         assert not isinstance(msg, RpcBroadcast)
         assert isinstance(msg, RpcCommand)
 
-        cmd = getattr(self, f'_command_{msg.name}')
+        cmd = getattr(self, f"_command_{msg.name}")
         try:
             payload = await cmd(**msg.kwargs)
         except Exception as e:
@@ -141,7 +134,8 @@ class RpcResponder:
     async def _command_create_tunnel(self, src_mac, dst_mac, timeout, layers):
         layers = LayersDescriptionRpcModel(**layers)
         tunnel = await self._tunnels_state.create_tunnel(
-            src_mac, dst_mac, timeout, layers)
+            src_mac, dst_mac, timeout, layers
+        )
         tunnels = self._tunnels_state.active_tunnels()
         tunnels = [m.asdict() for m in tunnels]
         # TODO deal with the duplicated response? here and in the notify_tunnel_created.
@@ -155,16 +149,17 @@ class RpcResponder:
         for s in list(self.rpc_server.sessions):
             if not s.is_closed:
                 await s.issue_broadcast(
-                    'tunnel_created',
-                    {"tunnel": tunnel.asdict(), "tunnels": tunnels})
+                    "tunnel_created", {"tunnel": tunnel.asdict(), "tunnels": tunnels}
+                )
 
 
 class TcpExteriorServerProtocol(asyncio.Protocol):
+
     def __init__(self, protocol_factory):
         try:
             self.protocol = protocol_factory()
         except:
-            logger.error('%s: __init__', type(self).__name__, exc_info=True)
+            logger.error("%s: __init__", type(self).__name__, exc_info=True)
             raise
 
     def connection_made(self, transport):
@@ -178,7 +173,8 @@ class TcpExteriorServerProtocol(asyncio.Protocol):
 
 
 class TcpExteriorServer:
-    def __init__(self, tunnels_state, *, tcp_port=None, tcp_host='0.0.0.0'):
+
+    def __init__(self, tunnels_state, *, tcp_port=None, tcp_host="0.0.0.0"):
         self.tcp_host = tcp_host
         self.tcp_port = tcp_port
         self.server = None
@@ -188,20 +184,23 @@ class TcpExteriorServer:
         return f"TcpExteriorServer server at {self.tcp_host}:{self.tcp_port}"
 
     async def __aenter__(self):
-        logger.info(f'Starting {self}')
+        logger.info(f"Starting {self}")
         await self.start_server()
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
-        logger.info(f'Closing {self}...')
+        logger.info(f"Closing {self}...")
         await self.close_wait()
 
     async def start_server(self):
         loop = asyncio.get_event_loop()
         self.server = await loop.create_server(
             lambda: TcpExteriorServerProtocol(
-                self._tunnels_state.create_tunnel_from_protocol),
-            self.tcp_host, self.tcp_port)
+                self._tunnels_state.create_tunnel_from_protocol
+            ),
+            self.tcp_host,
+            self.tcp_port,
+        )
         assert 1 == len(self.server.sockets)
         _, self.tcp_port = self.server.sockets[0].getsockname()
 
@@ -214,20 +213,19 @@ async def main_async_exit_stack(tcp_port):
     stack = AsyncExitStack()
     tunnels_state = await stack.enter_async_context(TunnelsState())
     await stack.enter_async_context(RpcResponder(tunnels_state))
-    await stack.enter_async_context(
-        TcpExteriorServer(tunnels_state, tcp_port=tcp_port))
+    await stack.enter_async_context(TcpExteriorServer(tunnels_state, tcp_port=tcp_port))
     return stack
 
 
 def main():
-    logger.info('Starting...')
+    logger.info("Starting...")
     loop = asyncio.get_event_loop()
 
     # TODO tcp port from args?
     stack = loop.run_until_complete(main_async_exit_stack(tcp_port=1194))
 
     try:
-        logger.info('Running forever...')
+        logger.info("Running forever...")
         loop.run_forever()
     except KeyboardInterrupt:
         # TODO graceful shutdown
@@ -238,5 +236,5 @@ def main():
     loop.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

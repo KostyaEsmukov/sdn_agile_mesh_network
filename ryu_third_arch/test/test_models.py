@@ -2,8 +2,8 @@ import json
 from unittest import TestCase
 
 from agile_mesh_network.common.models import (
-    TunnelModel, LayersDescriptionModel, NegotiationIntentionModel,
-    LayersDescriptionRpcModel
+    LayersDescriptionModel, LayersDescriptionRpcModel, NegotiationIntentionModel,
+    TunnelModel
 )
 
 TUNNEL_DATA = {
@@ -17,21 +17,13 @@ TUNNEL_DATA = {
 LAYERS_DESCRIPTION_DATA = {
     "protocol": "tcp",
     "dest": ["192.168.9.2", 1194],
-    "layers": {
-        "openvpn": {
-            "lz": False,
-        },
-    },
+    "layers": {"openvpn": {"lz": False}},
 }
 
 NEGOTIATION_INTENTION_DATA = {
     "src_mac": "00:11:22:33:44:00",
     "dst_mac": "00:11:22:33:44:01",
-    "layers": {
-        "openvpn": {
-            "lz": False,
-        },
-    },
+    "layers": {"openvpn": {"lz": False}},
 }
 
 
@@ -50,7 +42,7 @@ class ModelsTestCases(TestCase):
 
     def test_layers(self):
         default_data = LAYERS_DESCRIPTION_DATA.copy()
-        default_data.pop('dest')
+        default_data.pop("dest")
 
         mod = LayersDescriptionModel(**default_data)
 
@@ -83,6 +75,5 @@ class ModelsTestCases(TestCase):
             mod["src_mac"]
 
         data = mod.asdict()
-        self.assertDictEqual(data, {**NEGOTIATION_INTENTION_DATA,
-                                    "nonce": nonce})
+        self.assertDictEqual(data, {**NEGOTIATION_INTENTION_DATA, "nonce": nonce})
         json.dumps(data)  # must be serializable
