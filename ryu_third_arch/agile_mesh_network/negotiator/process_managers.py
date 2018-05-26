@@ -193,6 +193,9 @@ class OpenvpnProcessProtocol(asyncio.SubprocessProtocol):
         self.transport = transport
         self.pipe_context.add_closing(transport)
 
+    def pipe_data_received(self, fd, data):
+        pass
+
     def process_exited(self):
         self.fut_exit.set_result(None)
         self.pipe_context.close()

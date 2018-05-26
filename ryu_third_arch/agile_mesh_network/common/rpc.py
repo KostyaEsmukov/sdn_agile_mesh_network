@@ -18,6 +18,10 @@ class BaseRpcMessage(metaclass=ABCMeta):
         self.name = name
         self.kwargs = kwargs
 
+    def __repr__(self):
+        return (f'{type(self).__name__}(name={repr(self.name)}, '
+                f'kwargs={repr(self.kwargs)})')
+
 
 class RpcCommand(BaseRpcMessage):
     def __init__(self, name, kwargs, transport, msg_id):

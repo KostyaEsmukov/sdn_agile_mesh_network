@@ -1,32 +1,39 @@
 #!/usr/bin/env python3
 import argparse
 import asyncio
+import sys
 
 parser = argparse.ArgumentParser(description='TCP client/server for testing.')
 parser.add_argument('--mode', type=str, required=True, choices=('client', 'server'))
 parser.add_argument('--port', type=int, required=True)
-parser.add_argument('--data', type=str, help='client only')
+parser.add_argument('--data', type=str, required=True)
+
+
+async def handle(reader, writer, data):
+    writer.write(data.encode())
+    await writer.drain()
+    while True:
+        res = await reader.read(1)
+        if not res:
+            break
+        sys.stdout.write(res.decode())
+        sys.stdout.flush()
+    writer.close()
 
 
 async def tcp_client_local(port, data):
     reader, writer = await asyncio.open_connection('127.0.0.1', port)
-    writer.write(data.encode())
-    await writer.drain()
-    while not writer.is_closed():
-        sys.stdout.write(await reader.read(1))
-    writer.close()
+    await handle(reader, writer, data)
 
 
-async def tcp_server_local(port):
+async def tcp_server_local(port, data):
     done_future = asyncio.Future()
 
     async def handle_echo(reader, writer):
         try:
-            while not writer.is_closed():
-                sys.stdout.write(await reader.read(1))
-            writer.close()
+            await handle(reader, writer, data)
         except Exception as e:
-            done.future.set_exception(e)
+            done_future.set_exception(e)
             raise
         else:
             done_future.set_result(None)
@@ -40,11 +47,9 @@ if __name__ == '__main__':
     loop = asyncio.get_event_loop()
 
     if args.mode == 'client':
-        if not args.data:
-            raise ValueError('--data is required in --mode client')
         coro = tcp_client_local(args.port, args.data)
     elif args.mode == 'server':
-        coro = tcp_server_local(args.port)
+        coro = tcp_server_local(args.port, args.data)
     else:
         raise AssertionError('Unknown mode')
 
