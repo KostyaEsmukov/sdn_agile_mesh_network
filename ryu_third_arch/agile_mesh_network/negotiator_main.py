@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import asyncio
+import functools
 import logging
+import signal
 from logging import getLogger
 
 from agile_mesh_network.common.models import LayersDescriptionRpcModel, TunnelModel
@@ -217,6 +219,10 @@ async def main_async_exit_stack(tcp_port):
     return stack
 
 
+def stop_loop(loop):
+    loop.stop()
+
+
 def main():
     logger.info("Starting...")
     loop = asyncio.get_event_loop()
@@ -224,16 +230,21 @@ def main():
     # TODO tcp port from args?
     stack = loop.run_until_complete(main_async_exit_stack(tcp_port=1194))
 
+    for signame in ('SIGINT', 'SIGTERM'):
+        loop.add_signal_handler(getattr(signal, signame),
+                                functools.partial(stop_loop, loop))
+
     try:
         logger.info("Running forever...")
         loop.run_forever()
     except KeyboardInterrupt:
-        # TODO graceful shutdown
         pass
-
-    loop.run_until_complete(stack.aclose())
-    loop.run_until_complete(loop.shutdown_asyncgens())
-    loop.close()
+    finally:
+        loop.run_until_complete(stack.aclose())
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        pending = asyncio.Task.all_tasks()
+        loop.run_until_complete(asyncio.gather(*pending))
+        loop.close()
 
 
 if __name__ == "__main__":
