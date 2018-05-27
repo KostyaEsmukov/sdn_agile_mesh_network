@@ -4,6 +4,7 @@ import asyncio
 import functools
 import logging
 import signal
+import sys
 from logging import getLogger
 
 import click
@@ -11,7 +12,7 @@ from async_exit_stack import AsyncExitStack
 
 from agile_mesh_network.common.models import LayersDescriptionRpcModel, TunnelModel
 from agile_mesh_network.common.rpc import RpcBroadcast, RpcCommand, RpcUnixServer
-from agile_mesh_network.negotiator.process_managers import process_paths
+from agile_mesh_network.negotiator.process_managers import openvpn_config
 from agile_mesh_network.negotiator.tunnel import PendingTunnel, TunnelIntention
 
 logger = getLogger("negotiator")
@@ -236,9 +237,21 @@ def stop_loop(loop):
 )
 @click.option(
     "--openvpn-bin-path",
-    default=process_paths.openvpn,
+    default=openvpn_config.exe_path,
     show_default=True,
     help="Path to openvpn executable.",
+)
+@click.option(
+    "--openvpn-client-config-path",
+    default=openvpn_config.client_config_path,
+    show_default=True,
+    help="Path to openvpn client (initiator) config.",
+)
+@click.option(
+    "--openvpn-server-config-path",
+    default=openvpn_config.server_config_path,
+    show_default=True,
+    help="Path to openvpn server (responder) config.",
 )
 @click.option(
     "--rpc-unix-sock",
@@ -246,14 +259,27 @@ def stop_loop(loop):
     show_default=True,
     help="Path of Unix socket to bind for accepting RPC requests.",
 )
-def negotiator(openvpn_tcp_port, openvpn_bin_path, rpc_unix_sock):
+def negotiator(
+    openvpn_tcp_port,
+    openvpn_bin_path,
+    openvpn_client_config_path,
+    openvpn_server_config_path,
+    rpc_unix_sock,
+):
     """Negotiator daemon. Initializes tunnels by commands from RPC.
     """
 
     logger.info("Starting...")
     loop = asyncio.get_event_loop()
 
-    process_paths.openvpn = openvpn_bin_path
+    openvpn_config.exe_path = openvpn_bin_path
+    openvpn_config.client_config_path = openvpn_client_config_path
+    openvpn_config.server_config_path = openvpn_server_config_path
+    try:
+        openvpn_config.validate()
+    except Exception as e:
+        click.echo(f"Openvpn configuration validation failure: {e}")
+        sys.exit(1)
 
     stack = loop.run_until_complete(
         main_async_exit_stack(tcp_port=openvpn_tcp_port, socket_path=rpc_unix_sock)

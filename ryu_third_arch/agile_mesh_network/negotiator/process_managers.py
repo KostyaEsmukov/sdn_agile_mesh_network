@@ -1,4 +1,5 @@
 import asyncio
+import os
 import socket
 import subprocess
 from abc import ABCMeta, abstractmethod
@@ -10,13 +11,6 @@ from agile_mesh_network.common.async_utils import (
 )
 from agile_mesh_network.common.models import LayersDescriptionModel
 from agile_mesh_network.negotiator.tunnel_protocols import PipeContext
-
-
-class ProcessPaths:
-    openvpn = "openvpn"
-
-
-process_paths = ProcessPaths()
 
 
 class ProcessManager(metaclass=ABCMeta):
@@ -66,6 +60,41 @@ class ProcessManager(metaclass=ABCMeta):
         pass
 
 
+class OpenvpnConfig:
+    exe_path = "openvpn"
+    client_config_path = "/etc/openvpn/client.conf"
+    server_config_path = "/etc/openvpn/server.conf"
+
+    def validate(self):
+        errors = []
+        if not os.path.isfile(self.client_config_path):
+            errors.append(
+                f"Client config {self.client_config_path} does not exist "
+                "or is not a file."
+            )
+        if not os.path.isfile(self.client_config_path):
+            errors.append(
+                f"Server config {self.server_config_path} does not exist "
+                "or is not a file."
+            )
+        try:
+            proc = subprocess.run([self.exe_path, "--version"])
+        except Exception as e:
+            errors.append(f"Unable to start openvpn process ({self.exe_path}): {e}")
+        else:
+            if proc.returncode != 0:
+                errors.append(
+                    f"Unable to check openvpn process ({self.exe_path}) version: \n"
+                    f"{proc.stdout.decode()}\n{proc.stderr.decode()}"
+                )
+        # TODO check client and server don't contain remote/port
+        if errors:
+            raise ValueError("\n".join(errors))
+
+
+openvpn_config = OpenvpnConfig()
+
+
 class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
     """Manages openvpn processes."""
 
@@ -73,12 +102,11 @@ class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
         self._process_transport = None
         self.tun_dev_name = f'tap{dst_mac.replace(":", "")}'
         self._pipe_context = pipe_context
-        # TODO options
-        # TODO setup configs, certs
+        # TODO ?? setup configs, certs
 
     @property
     def _exec_path(self):
-        return process_paths.openvpn
+        return openvpn_config.exe_path
 
     async def _start_openvpn_process(self, args):
         loop = asyncio.get_event_loop()
@@ -118,9 +146,17 @@ class OpenvpnResponderProcessManager(BaseOpenvpnProcessManager):
         )
 
     def _build_process_args(self):
-        # Server with self._local_port
-        # TODO
-        return tuple()
+        cd = os.path.dirname(openvpn_config.server_config_path)
+        return tuple(
+            "--mode",
+            "server",
+            "--port",
+            str(self._local_port),
+            "--config",
+            openvpn_config.server_config_path,
+            "--cd",
+            cd,
+        )
 
 
 class OpenvpnInitiatorProcessManager(BaseOpenvpnProcessManager):
@@ -135,9 +171,18 @@ class OpenvpnInitiatorProcessManager(BaseOpenvpnProcessManager):
         await protocol.fut_connected
 
     def _build_process_args(self):
-        # Client to self._local_port
-        # TODO
-        return tuple()
+        cd = os.path.dirname(openvpn_config.client_config_path)
+        return tuple(
+            "--mode",
+            "client",
+            "--remote",
+            "127.0.0.1",
+            str(self._local_port),
+            "--config",
+            openvpn_config.client_config_path,
+            "--cd",
+            cd,
+        )
 
 
 def get_free_local_tcp_port():
