@@ -6,29 +6,25 @@ from typing import Iterable, List
 
 from pymongo import MongoClient
 
-import settings
+from agile_mesh_network import settings
 
-__all__ = (
-    'SwitchEntity',
-    'TopologyDatabase',
-)
+__all__ = ("SwitchEntity", "TopologyDatabase")
 
 # TODO maybe move to common.models?
-SwitchEntity = namedtuple('SwitchEntity', [
-    'hostname',
-    'is_relay',
-    'layers_config',
-    'mac',
-])
+SwitchEntity = namedtuple(
+    "SwitchEntity", ["hostname", "is_relay", "layers_config", "mac"]
+)
 
 
-class RemoteDatabase(ABCMeta):
+class RemoteDatabase(metaclass=ABCMeta):
+
     @abstractmethod
     def get_database(self) -> Iterable[SwitchEntity]:
         pass
 
 
 class MongoRemoteDatabase(RemoteDatabase):
+
     def __init__(self):
         self.client = MongoClient(settings.REMOTE_DATABASE_MONGO_URI)
 
@@ -79,8 +75,9 @@ class TopologyDatabase:
     def start_replication_thread(self):
         if self.timer:
             self.stop_replication()
-        self.timer = threading.Timer(self.database_sync_interval_seconds,
-                                     update_local_database, self)
+        self.timer = threading.Timer(
+            self.database_sync_interval_seconds, update_local_database, self
+        )
         self.timer.start()
 
     def stopjoin_replication_thread(self):

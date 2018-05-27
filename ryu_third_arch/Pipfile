@@ -21,6 +21,7 @@ ryu = "*"
 pytest = "*"
 flake8 = "*"
 coverage = "*"
+mockupdb = "*"
 
 [requires]
 python_version = "3.6"
