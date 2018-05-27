@@ -58,8 +58,10 @@ class LocalTopologyDatabase:
             return list(random.sample(self.relay_switches, count))
 
 
-def update_local_database(topology_database):
+def update_local_database(topology_database: 'TopologyDatabase'):
     topology_database.local.update(topology_database.remote.get_database())
+    for callback in topology_database._local_db_synced_callbacks:
+        callback()
 
 
 class TopologyDatabase:
@@ -70,30 +72,33 @@ class TopologyDatabase:
     def __init__(self):
         self.remote = self.remote_database()
         self.local = self.local_database()
-        self.timer = None
+        self._timer = None
+        self._local_db_synced_callbacks = []
+
+    def add_local_db_synced_callback(self, callback):
+        self._local_db_synced_callbacks.append(callback)
 
     def start_replication_thread(self):
-        if self.timer:
-            self.stop_replication()
-        self.timer = threading.Timer(
+        assert self._timer is None
+        self._timer = threading.Timer(
             self.database_sync_interval_seconds, update_local_database, self
         )
-        self.timer.start()
+        self._timer.start()
 
     def stopjoin_replication_thread(self):
-        if self.timer:
-            self.timer.cancel()
-            self.timer.join()
-        self.timer = None
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer.join()
+        self._timer = None
 
     def find_switch_by_mac(self, mac) -> SwitchEntity:
-        switch = self.local_database.find_switch_by_mac(mac)
+        switch = self.local.find_switch_by_mac(mac)
         if not switch:
             raise KeyError()
         return switch
 
     def find_random_relay_switches(self, count=1) -> List[SwitchEntity]:
-        switches = list(self.local_database.find_random_relay_switches(count))
+        switches = list(self.local.find_random_relay_switches(count))
         if not switches:
             raise IndexError()
         return switches

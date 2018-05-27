@@ -46,7 +46,6 @@ class IntegrationTestCase(TestCase):
                 async with TunnelsState() as tunnels_state, \
                         RpcResponder(tunnels_state, rpc_sock_path), \
                         RpcUnixClient(rpc_sock_path, command_cb) as rpc_c:
-                    await rpc_c.start()
                     rpc = rpc_c.session
                     resp = await asyncio.wait_for(
                         rpc.issue_command("dump_tunnels_state"), timeout=3
@@ -103,8 +102,6 @@ class IntegrationTestCase(TestCase):
                     self.assertIsNotNone(tcp_server_b.tcp_port)
 
                     # Setup RPC
-                    await rpc_a_c.start()
-                    await rpc_b_c.start()
                     rpc_a = rpc_a_c.session
                     rpc_b = rpc_b_c.session
 

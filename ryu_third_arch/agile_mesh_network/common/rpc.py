@@ -169,6 +169,7 @@ class RpcUnixServer:
         await self.server.wait_closed()
 
     async def __aenter__(self):
+        await self.start()
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
@@ -193,6 +194,7 @@ class RpcUnixClient:
         self.session.close()
 
     async def __aenter__(self):
+        await self.start()
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
