@@ -78,14 +78,19 @@ class OpenvpnConfig:
                 "or is not a file."
             )
         try:
-            proc = subprocess.run([self.exe_path, "--version"])
+            proc = subprocess.run(
+                [self.exe_path, "--version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
         except Exception as e:
             errors.append(f"Unable to start openvpn process ({self.exe_path}): {e}")
         else:
-            if proc.returncode != 0:
+            # `openvpn --version` errorcode is 1.
+            if b"openvpn" not in proc.stdout:
                 errors.append(
                     f"Unable to check openvpn process ({self.exe_path}) version: \n"
-                    f"{proc.stdout.decode()}\n{proc.stderr.decode()}"
+                    f"{proc.stdout.decode()}"
                 )
         # TODO check client and server don't contain remote/port
         if errors:
