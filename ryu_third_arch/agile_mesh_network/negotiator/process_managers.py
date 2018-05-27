@@ -12,6 +12,13 @@ from agile_mesh_network.common.models import LayersDescriptionModel
 from agile_mesh_network.negotiator.tunnel_protocols import PipeContext
 
 
+class ProcessPaths:
+    openvpn = "openvpn"
+
+
+process_paths = ProcessPaths()
+
+
 class ProcessManager(metaclass=ABCMeta):
 
     @staticmethod
@@ -62,14 +69,16 @@ class ProcessManager(metaclass=ABCMeta):
 class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
     """Manages openvpn processes."""
 
-    _exec_path = "openvpn"  # TODO
-
     def __init__(self, dst_mac, openvpn_options, pipe_context: PipeContext) -> None:
         self._process_transport = None
         self.tun_dev_name = f'tap{dst_mac.replace(":", "")}'
         self._pipe_context = pipe_context
         # TODO options
         # TODO setup configs, certs
+
+    @property
+    def _exec_path(self):
+        return process_paths.openvpn
 
     async def _start_openvpn_process(self, args):
         loop = asyncio.get_event_loop()

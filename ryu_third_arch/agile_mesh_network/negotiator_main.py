@@ -6,10 +6,13 @@ import logging
 import signal
 from logging import getLogger
 
+import click
+from async_exit_stack import AsyncExitStack
+
 from agile_mesh_network.common.models import LayersDescriptionRpcModel, TunnelModel
 from agile_mesh_network.common.rpc import RpcBroadcast, RpcCommand, RpcUnixServer
+from agile_mesh_network.negotiator.process_managers import process_paths
 from agile_mesh_network.negotiator.tunnel import PendingTunnel, TunnelIntention
-from async_exit_stack import AsyncExitStack
 
 logger = getLogger("negotiator")
 logging.basicConfig(level=logging.INFO)
@@ -87,7 +90,6 @@ class TunnelsState:
 class RpcResponder:
     """Provides RPC to the ryu app."""
 
-    # socket_path = '/Users/kostya/amn_negotiator.sock'
     socket_path = "/var/run/amn_negotiator.sock"
 
     def __init__(self, tunnels_state, socket_path=None):
@@ -211,10 +213,12 @@ class TcpExteriorServer:
         await self.server.wait_closed()
 
 
-async def main_async_exit_stack(tcp_port):
+async def main_async_exit_stack(*, tcp_port, socket_path):
     stack = AsyncExitStack()
     tunnels_state = await stack.enter_async_context(TunnelsState())
-    await stack.enter_async_context(RpcResponder(tunnels_state))
+    await stack.enter_async_context(
+        RpcResponder(tunnels_state, socket_path=socket_path)
+    )
     await stack.enter_async_context(TcpExteriorServer(tunnels_state, tcp_port=tcp_port))
     return stack
 
@@ -223,16 +227,42 @@ def stop_loop(loop):
     loop.stop()
 
 
-def main():
+@click.command()
+@click.option(
+    "--openvpn-tcp-port",
+    default=11194,
+    show_default=True,
+    help="Port to bind for accepting openvpn connections via another negotiator.",
+)
+@click.option(
+    "--openvpn-bin-path",
+    default=process_paths.openvpn,
+    show_default=True,
+    help="Path to openvpn executable.",
+)
+@click.option(
+    "--rpc-unix-sock",
+    default=RpcResponder.socket_path,
+    show_default=True,
+    help="Path of Unix socket to bind for accepting RPC requests.",
+)
+def negotiator(openvpn_tcp_port, openvpn_bin_path, rpc_unix_sock):
+    """Negotiator daemon. Initializes tunnels by commands from RPC.
+    """
+
     logger.info("Starting...")
     loop = asyncio.get_event_loop()
 
-    # TODO tcp port from args?
-    stack = loop.run_until_complete(main_async_exit_stack(tcp_port=1194))
+    process_paths.openvpn = openvpn_bin_path
 
-    for signame in ('SIGINT', 'SIGTERM'):
-        loop.add_signal_handler(getattr(signal, signame),
-                                functools.partial(stop_loop, loop))
+    stack = loop.run_until_complete(
+        main_async_exit_stack(tcp_port=openvpn_tcp_port, socket_path=rpc_unix_sock)
+    )
+
+    for signame in ("SIGINT", "SIGTERM"):
+        loop.add_signal_handler(
+            getattr(signal, signame), functools.partial(stop_loop, loop)
+        )
 
     try:
         logger.info("Running forever...")
@@ -248,4 +278,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    negotiator()
