@@ -9,13 +9,13 @@ testcov = "sh -c 'coverage run -m py.test && coverage report'"
 lint = "flake8"
 
 [packages]
-ryu = "*"
-pymongo = "*"
 "e1839a8" = {path = ".", editable = true}
-cryptography = "*"
-dataclasses = "*"
 async-exit-stack = "*"
 click = "*"
+cryptography = "*"
+dataclasses = "*"
+pymongo = "*"
+ryu = "*"
 
 [dev-packages]
 pytest = "*"

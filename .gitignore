@@ -3,4 +3,6 @@
 *.egg-info
 .python-version
 .pytest_cache
+build
+dist
 
