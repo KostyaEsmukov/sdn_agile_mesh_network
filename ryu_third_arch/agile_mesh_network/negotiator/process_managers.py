@@ -3,6 +3,7 @@ import socket
 import subprocess
 from abc import ABCMeta, abstractmethod
 from contextlib import closing
+from typing import Awaitable
 
 from agile_mesh_network.common.async_utils import (
     future_set_exception_silent, future_set_result_silent
@@ -63,7 +64,7 @@ class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
 
     _exec_path = "openvpn"  # TODO
 
-    def __init__(self, dst_mac, openvpn_options, pipe_context: PipeContext):
+    def __init__(self, dst_mac, openvpn_options, pipe_context: PipeContext) -> None:
         self._process_transport = None
         self.tun_dev_name = f'tap{dst_mac.replace(":", "")}'
         self._pipe_context = pipe_context
@@ -169,10 +170,10 @@ def single_connection_factory(protocol):
 
 class InteriorProtocol(asyncio.Protocol):
 
-    def __init__(self, pipe_context: PipeContext):
+    def __init__(self, pipe_context: PipeContext) -> None:
         self.transport = None
         self.pipe_context = pipe_context
-        self.fut_connected = asyncio.Future()
+        self.fut_connected: Awaitable[None] = asyncio.Future()
         pipe_context.add_close_callback(
             lambda: future_set_exception_silent(
                 self.fut_connected, OSError("connection closed")
@@ -193,11 +194,10 @@ class InteriorProtocol(asyncio.Protocol):
 
 class OpenvpnProcessProtocol(asyncio.SubprocessProtocol):
 
-    def __init__(self, pipe_context: PipeContext):
+    def __init__(self, pipe_context: PipeContext) -> None:
         self.transport = None
         self.pipe_context = pipe_context
-        pipe_context.add_closing
-        self.fut_exit = asyncio.Future()
+        self.fut_exit: Awaitable[None] = asyncio.Future()
 
     def connection_made(self, transport):
         self.transport = transport

@@ -2,6 +2,7 @@ import asyncio
 import json
 from abc import ABCMeta
 from logging import getLogger
+from typing import Awaitable, Optional
 
 from agile_mesh_network.common.async_utils import (
     future_set_exception_silent, future_set_result_silent
@@ -89,7 +90,7 @@ class NegotiationMessages:
     @classmethod
     def validate_ack(
         cls, line: bytes, negotiation_intention: NegotiationIntentionModel
-    ) -> str:
+    ):
         exp_ack = b"ack" + negotiation_intention.nonce.encode()
         if line != exp_ack:
             logger.error("Bad ack! Expected: %r. Received: %r", exp_ack, line)
@@ -98,7 +99,7 @@ class NegotiationMessages:
 
 class BaseExteriorProtocol(asyncio.Protocol, metaclass=ABCMeta):
 
-    def __init__(self, pipe_context: PipeContext):
+    def __init__(self, pipe_context: PipeContext) -> None:
         self.interior_transport = None
         self._enc_reader = EncryptedNewlineReader()
         self.pipe_context = pipe_context
@@ -118,11 +119,11 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
         self,
         pipe_context: PipeContext,
         negotiation_intention: NegotiationIntentionModel,
-    ):
+    ) -> None:
         super().__init__(pipe_context)
         self.negotiation_intention = negotiation_intention
         self.is_negotiated = False
-        self.fut_negotiated = asyncio.Future()
+        self.fut_negotiated: Awaitable[None] = asyncio.Future()
         pipe_context.add_close_callback(
             lambda: future_set_exception_silent(
                 self.fut_negotiated, OSError("connection closed")
@@ -163,11 +164,11 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
 
 class ResponderExteriorTcpProtocol(BaseExteriorProtocol):
 
-    def __init__(self, pipe_context: PipeContext):
+    def __init__(self, pipe_context: PipeContext) -> None:
         super().__init__(pipe_context)
-        self.negotiation_intention = None
+        self.negotiation_intention: Optional[NegotiationIntentionModel] = None
         self.is_intention_read = False
-        self.fut_intention_read = asyncio.Future()
+        self.fut_intention_read: Awaitable[None] = asyncio.Future()
         pipe_context.add_close_callback(
             lambda: future_set_exception_silent(
                 self.fut_intention_read, OSError("connection closed")

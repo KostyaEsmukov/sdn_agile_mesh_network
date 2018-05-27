@@ -3,7 +3,7 @@ import builtins
 import json
 from abc import ABCMeta
 from logging import getLogger
-from typing import Any
+from typing import Any, Awaitable
 
 from .reader import NewlineReader
 
@@ -73,7 +73,8 @@ class RpcSession:
         msg_id = str(self.msg_id)
         payload = ":".join(("c", msg_id, name, json.dumps(kwargs))) + "\n"
         self.transport.write(payload.encode())
-        fut = self.msg_id_to_future[msg_id] = asyncio.Future()
+        fut: Awaitable[Any] = asyncio.Future()
+        self.msg_id_to_future[msg_id] = fut
         return await fut
 
     def close(self):

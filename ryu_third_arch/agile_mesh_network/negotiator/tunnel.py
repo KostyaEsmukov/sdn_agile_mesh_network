@@ -14,7 +14,7 @@ from agile_mesh_network.negotiator.tunnel_protocols import (
 
 class BaseTunnel(metaclass=ABCMeta):
 
-    def __init__(self, src_mac, dst_mac, layers: LayersList):
+    def __init__(self, src_mac, dst_mac, layers: LayersList) -> None:
         self.src_mac = src_mac
         self.dst_mac = dst_mac
         self.layers = layers
@@ -107,7 +107,7 @@ class Tunnel(BaseTunnel):
 
     def __init__(
         self, tunnel_intention: TunnelIntention, process_manager: ProcessManager
-    ):
+    ) -> None:
         super().__init__(
             tunnel_intention.src_mac, tunnel_intention.dst_mac, tunnel_intention.layers
         )
@@ -142,9 +142,9 @@ class PendingTunnel(metaclass=ABCMeta):
         protocol = ResponderExteriorTcpProtocol(pipe_context)
         return protocol, _ResponderPendingTunnel.negotiate(protocol)
 
-    def __init__(self, tunnel_intention, layers: LayersDescriptionModel):
+    def __init__(self, tunnel_intention, layers: LayersDescriptionModel) -> None:
         self.tunnel_intention = tunnel_intention
-        self._layers = layers
+        self._layers: LayersDescriptionModel = layers
 
     @abstractmethod
     async def create_tunnel(self) -> Tunnel:
@@ -153,7 +153,9 @@ class PendingTunnel(metaclass=ABCMeta):
 
 class _InitiatorPendingTunnel(PendingTunnel):
 
-    def __init__(self, tunnel_intention, layers: LayersDescriptionRpcModel, timeout):
+    def __init__(
+        self, tunnel_intention, layers: LayersDescriptionRpcModel, timeout
+    ) -> None:
         super().__init__(tunnel_intention, layers)
         self._timeout = timeout
 
@@ -181,7 +183,7 @@ class _ResponderPendingTunnel(PendingTunnel):
         tunnel_intention,
         layers: LayersDescriptionModel,
         protocol: ResponderExteriorTcpProtocol,
-    ):
+    ) -> None:
         super().__init__(tunnel_intention, layers)
         self._protocol = protocol
 
@@ -189,6 +191,7 @@ class _ResponderPendingTunnel(PendingTunnel):
     async def negotiate(cls, protocol: ResponderExteriorTcpProtocol) -> PendingTunnel:
         with protocol.pipe_context:
             await protocol.fut_intention_read
+            assert protocol.negotiation_intention
             # TODO validate MAC
             tunnel_intention, layers = TunnelIntention.from_negotiation_intention(
                 protocol.negotiation_intention, protocol="tcp"
