@@ -2,18 +2,15 @@ import random
 import threading
 from abc import ABCMeta, abstractmethod
 from collections import namedtuple
+from logging import getLogger
 from typing import Iterable, List
 
 from pymongo import MongoClient
 
 from agile_mesh_network import settings
+from agile_mesh_network.common.models import SwitchEntity
 
-__all__ = ("SwitchEntity", "TopologyDatabase")
-
-# TODO maybe move to common.models?
-SwitchEntity = namedtuple(
-    "SwitchEntity", ["hostname", "is_relay", "layers_config", "mac"]
-)
+logger = getLogger(__name__)
 
 
 class RemoteDatabase(metaclass=ABCMeta):
@@ -31,7 +28,7 @@ class MongoRemoteDatabase(RemoteDatabase):
     def get_database(self) -> Iterable[SwitchEntity]:
         db = self.client.topology_database
         collection = db.switch_collection
-        return [SwitchEntity(**doc) for doc in collection.find()]
+        return [SwitchEntity.from_dict(doc) for doc in collection.find()]
 
 
 class LocalTopologyDatabase:
@@ -41,11 +38,15 @@ class LocalTopologyDatabase:
         self.mac_to_switch = {}
         self.relay_switches = []
         self.lock = threading.Lock()
+        self.is_filled = False
+        self.is_filled_event = threading.Event()
 
     def update(self, switches):
         with self.lock:
             self.mac_to_switch = {switch.mac: switch for switch in switches}
             self.relay_switches = [switch for switch in switches if switch.is_relay]
+            self.is_filled = True
+        self.is_filled_event.set()
 
     def find_switch_by_mac(self, mac):
         """None if not found."""
@@ -58,10 +59,13 @@ class LocalTopologyDatabase:
             return list(random.sample(self.relay_switches, count))
 
 
-def update_local_database(topology_database: 'TopologyDatabase'):
-    topology_database.local.update(topology_database.remote.get_database())
-    for callback in topology_database._local_db_synced_callbacks:
-        callback()
+def update_local_database(topology_database: "TopologyDatabase"):
+    try:
+        topology_database.local.update(topology_database.remote.get_database())
+        for callback in topology_database._local_db_synced_callbacks:
+            callback()
+    except Exception as e:
+        logger.error("Exception in database sync thread", exc_info=True)
 
 
 class TopologyDatabase:
@@ -80,8 +84,11 @@ class TopologyDatabase:
 
     def start_replication_thread(self):
         assert self._timer is None
-        self._timer = threading.Timer(
-            self.database_sync_interval_seconds, update_local_database, args=(self,)
+        self._timer = SetIntervalThread(
+            self.database_sync_interval_seconds,
+            update_local_database,
+            args=(self,),
+            run_immediately=True,
         )
         self._timer.start()
 
@@ -102,3 +109,26 @@ class TopologyDatabase:
         if not switches:
             raise IndexError()
         return switches
+
+
+class SetIntervalThread(threading.Thread):
+
+    def __init__(
+        self, interval, function, args=None, kwargs=None, run_immediately=False
+    ):
+        super().__init__()
+        self.interval = interval
+        self.function = function
+        self.args = args if args is not None else []
+        self.kwargs = kwargs if kwargs is not None else {}
+        self.finished = threading.Event()
+        self.run_immediately = run_immediately
+
+    def cancel(self):
+        self.finished.set()
+
+    def run(self):
+        if self.run_immediately:
+            self.function(*self.args, **self.kwargs)
+        while not self.finished.wait(self.interval):
+            self.function(*self.args, **self.kwargs)

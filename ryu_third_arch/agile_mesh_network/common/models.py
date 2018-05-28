@@ -1,4 +1,5 @@
 import base64
+import inspect
 import os
 from typing import Any, Mapping, Sequence
 
@@ -49,3 +50,20 @@ class NegotiationIntentionModel:
     nonce: str = field(default_factory=random_string)
 
     asdict = asdict
+
+
+@dataclass
+class SwitchEntity:
+    hostname: str
+    is_relay: bool
+    mac: str
+    layers_config: Any  # TODO
+
+    @classmethod
+    def from_dict(cls, kwargs):
+        """Like cls(**kwargs), but silently skips unknown arguments.
+        """
+        extra = set(kwargs) - set(inspect.signature(cls.__init__).parameters.keys())
+        for key in extra:
+            kwargs.pop(key)
+        return cls(**kwargs)
