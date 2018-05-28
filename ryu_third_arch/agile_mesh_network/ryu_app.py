@@ -13,10 +13,11 @@ from ryu.lib.packet import ether_types, ethernet, packet
 from ryu.ofproto import ofproto_v1_4
 
 from agile_mesh_network import settings
+from agile_mesh_network.common.models import LayersDescriptionRpcModel
 from agile_mesh_network.common.rpc import RpcUnixClient
 from agile_mesh_network.ryu.topology_database import SwitchEntity, TopologyDatabase
 
-logger = getLogger('amn_ryu_app')
+logger = getLogger("amn_ryu_app")
 # CONF = cfg.CONF['amn-app']
 # TODO https://github.com/osrg/ryu/blob/master/ryu/services/protocols/bgp/application.py
 
@@ -42,10 +43,13 @@ class NetworkView:
         # TODO state: ovsdb tunnels list
         # TODO state: negotiator tunnels list
 
+    # These methods are called from other threads, so they must be
+    # fast, thread-safe and don't throw any exceptions.
     def _event_db_synced(self):
         pass  # TODO
 
-    def _event_negotiator_tunnels_update(self, tunnel, tunnels):
+    def _event_negotiator_tunnels_update(self, topic, tunnel, tunnels):
+        print(tunnels)
         pass  # TODO
 
     def _event_flow_packet_in(self):
@@ -59,8 +63,10 @@ class NegotiatorRpc:
         self.unix_sock_path = unix_sock_path
         self._tunnels_changed_callbacks = []
         self._loop = None
+        self._rpc_commands_queue = asyncio.Queue()
         self._thread_interrupted = False
         self._thread_started_event = threading.Event()
+        self.is_connected_event = threading.Event()
 
     def add_tunnels_changed_callback(self, callback):
         self._tunnels_changed_callbacks.append(callback)
@@ -80,13 +86,37 @@ class NegotiatorRpc:
             self._thread.join()
         self._thread = None
         self._thread_started_event.clear()
+        self.is_connected_event.clear()
 
-    # TODO expose RPC commands
+    def start_tunnel(
+        self, src_mac, dst_mac, timeout, layers: LayersDescriptionRpcModel
+    ) -> None:
+        self._loop.call_soon_threadsafe(
+            self._rpc_commands_queue.put_nowait,
+            (
+                "create_tunnel",
+                {
+                    "src_mac": src_mac,
+                    "dst_mac": dst_mac,
+                    "timeout": timeout,
+                    "layers": layers.asdict(),
+                },
+            ),
+        )
+
+    def list_tunnels(self):
+        self._loop.call_soon_threadsafe(
+            self._rpc_commands_queue.put_nowait, ("dump_tunnels_state", {})
+        )
+
+    # TODO stop_tunnel
 
     def _run(self):
 
         async def command_cb(session, msg):
-            pass  # TODO
+            assert msg.keys() == {"tunnels"}
+            for callback in self._tunnels_changed_callbacks:
+                callback(topic=None, tunnel=None, tunnels=msg["tunnels"])
 
         async def async_stack(stack):
             rpc_client = await stack.enter_async_context(
@@ -94,26 +124,41 @@ class NegotiatorRpc:
             )
             return rpc_client
 
+        async def queue_processing(rpc_client):
+            # TODO exc processing  !!!!!!!!!
+            while True:
+                # TODO use future??? don't block.
+                name, kwargs = await self._rpc_commands_queue.get()
+                msg = await rpc_client.session.issue_command(name, kwargs)
+                self._rpc_commands_queue.task_done()
+                assert msg.keys() == {"tunnel", "tunnels"}
+                for callback in self._tunnels_changed_callbacks:
+                    callback(topic=name, tunnel=msg["tunnels"], tunnels=msg["tunnels"])
+
         while not self._thread_interrupted:
+            # asyncio.set_event_loop(None)
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)  # Relates to the current thread only.
+            asyncio.set_event_loop(loop)  # Related to the current thread only.
             self._loop = loop
             self._thread_started_event.set()
 
             stack = AsyncExitStack()
             try:
                 rpc_client = loop.run_until_complete(async_stack(stack))
+                self.is_connected_event.set()
+                loop.run_until_complete(queue_processing(rpc_client))
+                # asyncio.ensure_future(queue_processing(rpc_client), loop=loop)
                 loop.run_forever()
             except Exception as e:
                 self._handle_thread_exception(e)
             finally:
-                logger.info('Shutting down RPC event loop')
+                logger.info("Shutting down RPC event loop")
                 loop.run_until_complete(stack.aclose())
                 loop.close()
-                # self._loop = None
+                self.is_connected_event.clear()
 
     def _handle_thread_exception(self, e):
-        logger.error('Error in RPC thread', exc_info=e)
+        logger.error("Error in RPC thread", exc_info=e)
         sleep(1)  # Avoid rapid looping on frequent failures
 
 

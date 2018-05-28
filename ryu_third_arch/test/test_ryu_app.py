@@ -78,6 +78,8 @@ class ManagerTestCase(unittest.TestCase):
         self.loop.run_until_complete(self.loop.shutdown_asyncgens())
         self.loop.close()
 
+        self.server.stop()
+
     def test_topology_database_sync(self):
         with AgileMeshNetworkManager() as manager:
             local_database = manager.topology_database.local
@@ -98,3 +100,25 @@ class ManagerTestCase(unittest.TestCase):
                 ),
                 SwitchEntity(**SWITCH_ENTITY_BOARD_DATA),
             )
+
+            # TODO after resync extra tunnels/flows are destroyed
+
+    def test_rpc(self):
+        with AgileMeshNetworkManager() as manager:
+            self.assertTrue(manager.negotiator_rpc.is_connected_event.wait(timeout=2))
+            manager.negotiator_rpc.list_tunnels()
+            sleep(3)
+
+            # TODO list command is sent on connection
+            # TODO incoming tunnel events are respected in NV
+            # TODO relay tunnel connection is automatically sent
+
+            # TODO unknown tunnels after resync are dropped via RPC,
+            # missing flows are added
+            pass
+
+    def test_flows(self):
+        with AgileMeshNetworkManager() as manager:
+            # TODO after packet in a tunnel creation request is sent
+            # TODO after tunnel creation a flow is set up
+            pass

@@ -30,6 +30,9 @@ class MongoRemoteDatabase(RemoteDatabase):
         collection = db.switch_collection
         return [SwitchEntity.from_dict(doc) for doc in collection.find()]
 
+    def close(self):
+        self.client.close()
+
 
 class LocalTopologyDatabase:
     """In-memory storage. Must be thread-safe."""
@@ -97,6 +100,7 @@ class TopologyDatabase:
             self._timer.cancel()
             self._timer.join()
         self._timer = None
+        self.remote.close()
 
     def find_switch_by_mac(self, mac) -> SwitchEntity:
         switch = self.local.find_switch_by_mac(mac)
