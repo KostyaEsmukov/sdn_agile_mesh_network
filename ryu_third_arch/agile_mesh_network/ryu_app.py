@@ -59,107 +59,73 @@ class NetworkView:
 class NegotiatorRpc:
 
     def __init__(self, unix_sock_path):
-        self._thread = None
         self.unix_sock_path = unix_sock_path
         self._tunnels_changed_callbacks = []
-        self._loop = None
-        self._rpc_commands_queue = asyncio.Queue()
-        self._thread_interrupted = False
-        self._thread_started_event = threading.Event()
-        self.is_connected_event = threading.Event()
+        self._stack = AsyncExitStack()
+        self._rpc = None
+        self._initial_sync_task = None
 
     def add_tunnels_changed_callback(self, callback):
         self._tunnels_changed_callbacks.append(callback)
 
-    def start_thread(self):
-        assert self._thread is None
-        self._thread_interrupted = False
-        self._thread = threading.Thread(target=self._run)
-        self._thread.start()
-        self._thread_started_event.wait()
+    async def _get_session(self):
+        if not self._rpc:
+            self._rpc = await self._stack.enter_async_context(
+                RpcUnixClient(self.unix_sock_path, self._rpc_command_handler)
+            )
+        return self._rpc.session
 
-    def stopjoin_thread(self):
-        if self._thread is not None and self._thread.is_alive():
-            assert self._loop
-            self._thread_interrupted = True
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            self._thread.join()
-        self._thread = None
-        self._thread_started_event.clear()
-        self.is_connected_event.clear()
+    async def __aenter__(self):
+        assert self._initial_sync_task is None
+        self._initial_sync_task = asyncio.ensure_future(self._initial_sync())
+        return self
 
-    def start_tunnel(
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self._initial_sync_task.cancel()
+        await self._stack.aclose()
+
+    async def _initial_sync(self):
+        try:
+            await self.list_tunnels()
+        except:
+            logger.error("Negotiator initial sync failed", exc_info=True)
+
+    async def start_tunnel(
         self, src_mac, dst_mac, timeout, layers: LayersDescriptionRpcModel
     ) -> None:
-        self._loop.call_soon_threadsafe(
-            self._rpc_commands_queue.put_nowait,
-            (
-                "create_tunnel",
-                {
-                    "src_mac": src_mac,
-                    "dst_mac": dst_mac,
-                    "timeout": timeout,
-                    "layers": layers.asdict(),
-                },
-            ),
+        session = await self._get_session()
+        msg = await session.issue_command(
+            "create_tunnel",
+            {
+                "src_mac": src_mac,
+                "dst_mac": dst_mac,
+                "timeout": timeout,
+                "layers": layers.asdict(),
+            },
         )
-
-    def list_tunnels(self):
-        self._loop.call_soon_threadsafe(
-            self._rpc_commands_queue.put_nowait, ("dump_tunnels_state", {})
-        )
-
-    # TODO stop_tunnel
-
-    def _run(self):
-
-        async def command_cb(session, msg):
-            assert msg.keys() == {"tunnels"}
-            for callback in self._tunnels_changed_callbacks:
-                callback(topic=None, tunnel=None, tunnels=msg["tunnels"])
-
-        async def async_stack(stack):
-            rpc_client = await stack.enter_async_context(
-                RpcUnixClient(self.unix_sock_path, command_cb)
+        assert msg.keys() == {"tunnel", "tunnels"}
+        for callback in self._tunnels_changed_callbacks:
+            callback(
+                topic="create_tunnel", tunnel=msg["tunnels"], tunnels=msg["tunnels"]
             )
-            return rpc_client
+        # TODO return??
 
-        async def queue_processing(rpc_client):
-            # TODO exc processing  !!!!!!!!!
-            while True:
-                # TODO use future??? don't block.
-                name, kwargs = await self._rpc_commands_queue.get()
-                msg = await rpc_client.session.issue_command(name, kwargs)
-                self._rpc_commands_queue.task_done()
-                assert msg.keys() == {"tunnel", "tunnels"}
-                for callback in self._tunnels_changed_callbacks:
-                    callback(topic=name, tunnel=msg["tunnels"], tunnels=msg["tunnels"])
+    async def list_tunnels(self):
+        session = await self._get_session()
+        msg = await session.issue_command("dump_tunnels_state")
+        assert msg.keys() == {"tunnels"}
+        for callback in self._tunnels_changed_callbacks:
+            callback(
+                topic="dump_tunnels_state",
+                tunnel=None,
+                tunnels=msg["tunnels"],
+            )
+        # TODO return??
 
-        while not self._thread_interrupted:
-            # asyncio.set_event_loop(None)
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)  # Related to the current thread only.
-            self._loop = loop
-            self._thread_started_event.set()
-
-            stack = AsyncExitStack()
-            try:
-                rpc_client = loop.run_until_complete(async_stack(stack))
-                self.is_connected_event.set()
-                loop.run_until_complete(queue_processing(rpc_client))
-                # asyncio.ensure_future(queue_processing(rpc_client), loop=loop)
-                loop.run_forever()
-            except Exception as e:
-                self._handle_thread_exception(e)
-            finally:
-                logger.info("Shutting down RPC event loop")
-                loop.run_until_complete(stack.aclose())
-                loop.close()
-                self.is_connected_event.clear()
-
-    def _handle_thread_exception(self, e):
-        logger.error("Error in RPC thread", exc_info=e)
-        sleep(1)  # Avoid rapid looping on frequent failures
+    async def _rpc_command_handler(self, session, msg):
+        assert msg.keys() == {"tunnels"}
+        for callback in self._tunnels_changed_callbacks:
+            callback(topic=None, tunnel=None, tunnels=msg["tunnels"])
 
 
 class AgileMeshNetworkManager:
@@ -168,15 +134,15 @@ class AgileMeshNetworkManager:
         self.topology_database = TopologyDatabase()
         self.negotiator_rpc = NegotiatorRpc(settings.NEGOTIATOR_RPC_UNIX_SOCK_PATH)
         self.network_view = NetworkView(self.topology_database, self.negotiator_rpc)
+        self._stack = AsyncExitStack()
 
-    def __enter__(self):
-        self.topology_database.start_replication_thread()
-        self.negotiator_rpc.start_thread()
+    async def __aenter__(self):
+        await self._stack.enter_async_context(self.topology_database)
+        await self._stack.enter_async_context(self.negotiator_rpc)
         return self
 
-    def __exit__(self, exc_type, exc_value, exc_tb):
-        self.topology_database.stopjoin_replication_thread()
-        self.negotiator_rpc.stopjoin_thread()
+    async def __aexit__(self, exc_type, exc_value, exc_tb):
+        await self._stack.aclose()
 
 
 class SwitchApp(app_manager.RyuApp):
@@ -186,11 +152,12 @@ class SwitchApp(app_manager.RyuApp):
         super().__init__(*args, **kwargs)
         self.mac_to_port = {}
         self.manager = AgileMeshNetworkManager()
-        self._stack = ExitStack()
+        # TODO asyncio loop
+        # self._stack = ExitStack()
 
     def start(self):
         super().start()
-        self._stack.enter_context(self.manager)
+        # self._stack.enter_context(self.manager)
 
     def stop(self):
         self._stack.close()

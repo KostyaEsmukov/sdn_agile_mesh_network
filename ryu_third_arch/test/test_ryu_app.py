@@ -11,9 +11,10 @@ from mockupdb import Command, MockupDB
 
 from agile_mesh_network import settings
 from agile_mesh_network.common.models import SwitchEntity
-from agile_mesh_network.common.rpc import RpcUnixServer
+from agile_mesh_network.common.rpc import RpcCommand, RpcUnixServer
 from agile_mesh_network.ryu_app import AgileMeshNetworkManager
 
+LOCAL_MAC = "00:11:22:33:00:00"
 SWITCH_ENTITY_RELAY_DATA = {
     "hostname": "relay1",
     "is_relay": True,
@@ -27,6 +28,14 @@ SWITCH_ENTITY_BOARD_DATA = {
     "layers_config": {},
 }
 TOPOLOGY_DATABASE_DATA = [SWITCH_ENTITY_RELAY_DATA, SWITCH_ENTITY_BOARD_DATA]
+
+SAMPLE_TUNNEL_DATA = {
+    "src_mac": LOCAL_MAC,
+    "dst_mac": "00:11:22:33:44:01",
+    "is_dead": False,
+    "is_tunnel_active": True,
+    "layers": ["openvpn"],
+}
 
 
 class ManagerTestCase(unittest.TestCase):
@@ -63,13 +72,18 @@ class ManagerTestCase(unittest.TestCase):
         )
 
         async def command_cb(session, msg):
-            assert False
+            assert isinstance(msg, RpcCommand)
+            await self._rpc_command_cb(msg)
 
         self.rpc_server = self.loop.run_until_complete(
             self._astack.enter_async_context(
                 RpcUnixServer(self.rpc_unix_sock, command_cb)
             )
         )
+
+    async def _rpc_command_cb(self, msg: RpcCommand):
+        self.assertEqual(msg.name, "dump_tunnels_state")
+        await msg.respond({"tunnels": []})
 
     def tearDown(self):
         self.loop.run_until_complete(self._astack.aclose())
@@ -81,44 +95,65 @@ class ManagerTestCase(unittest.TestCase):
         self.server.stop()
 
     def test_topology_database_sync(self):
-        with AgileMeshNetworkManager() as manager:
-            local_database = manager.topology_database.local
-            self.assertTrue(local_database.is_filled_event.wait(timeout=2))
-            self.assertTrue(local_database.is_filled)
 
-            self.assertListEqual(
-                manager.topology_database.find_random_relay_switches(),
-                [SwitchEntity(**SWITCH_ENTITY_RELAY_DATA)],
-            )
+        async def f():
+            async with AgileMeshNetworkManager() as manager:
+                local_database = manager.topology_database.local
+                await asyncio.wait_for(local_database.is_filled_event.wait(), timeout=2)
+                self.assertTrue(local_database.is_filled)
 
-            with self.assertRaises(KeyError):
-                manager.topology_database.find_switch_by_mac("99:99:99:88:88:88")
+                self.assertListEqual(
+                    manager.topology_database.find_random_relay_switches(),
+                    [SwitchEntity(**SWITCH_ENTITY_RELAY_DATA)],
+                )
 
-            self.assertEqual(
-                manager.topology_database.find_switch_by_mac(
-                    SWITCH_ENTITY_BOARD_DATA["mac"]
-                ),
-                SwitchEntity(**SWITCH_ENTITY_BOARD_DATA),
-            )
+                with self.assertRaises(KeyError):
+                    manager.topology_database.find_switch_by_mac("99:99:99:88:88:88")
 
-            # TODO after resync extra tunnels/flows are destroyed
+                self.assertEqual(
+                    manager.topology_database.find_switch_by_mac(
+                        SWITCH_ENTITY_BOARD_DATA["mac"]
+                    ),
+                    SwitchEntity(**SWITCH_ENTITY_BOARD_DATA),
+                )
+
+                # TODO after resync extra tunnels/flows are destroyed
+
+        self.loop.run_until_complete(f())
 
     def test_rpc(self):
-        with AgileMeshNetworkManager() as manager:
-            self.assertTrue(manager.negotiator_rpc.is_connected_event.wait(timeout=2))
-            manager.negotiator_rpc.list_tunnels()
-            sleep(3)
 
-            # TODO list command is sent on connection
-            # TODO incoming tunnel events are respected in NV
-            # TODO relay tunnel connection is automatically sent
+        async def f():
 
-            # TODO unknown tunnels after resync are dropped via RPC,
-            # missing flows are added
-            pass
+            async def _rpc_command_cb(msg: RpcCommand):
+                self.assertEqual(msg.name, "dump_tunnels_state")
+                await msg.respond({"tunnels": [SAMPLE_TUNNEL_DATA]})
+
+            with patch.object(self, "_rpc_command_cb", _rpc_command_cb):
+
+                async with AgileMeshNetworkManager() as manager:
+                    neg = manager.negotiator_rpc
+                    # await neg.list_tunnels()
+                    await neg._initial_sync_task
+                    # sleep(3)
+
+                    # TODO list command is sent on connection
+
+                    # TODO incoming tunnel events are respected in NV
+                    # TODO relay tunnel connection is automatically sent
+
+                    # TODO unknown tunnels after resync are dropped via RPC
+                    pass
+
+        self.loop.run_until_complete(f())
 
     def test_flows(self):
-        with AgileMeshNetworkManager() as manager:
-            # TODO after packet in a tunnel creation request is sent
-            # TODO after tunnel creation a flow is set up
-            pass
+
+        async def f():
+            async with AgileMeshNetworkManager() as manager:
+                # TODO missing flows from RPC sync are added
+                # TODO after packet in a tunnel creation request is sent
+                # TODO after tunnel creation a flow is set up
+                pass
+
+        self.loop.run_until_complete(f())

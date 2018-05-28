@@ -1,7 +1,8 @@
+import asyncio
+import functools
 import random
-import threading
 from abc import ABCMeta, abstractmethod
-from collections import namedtuple
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from logging import getLogger
 from typing import Iterable, List
 
@@ -16,59 +17,68 @@ logger = getLogger(__name__)
 class RemoteDatabase(metaclass=ABCMeta):
 
     @abstractmethod
-    def get_database(self) -> Iterable[SwitchEntity]:
+    async def get_database(self) -> Iterable[SwitchEntity]:
+        pass
+
+    @abstractmethod
+    async def aclose(self):
         pass
 
 
 class MongoRemoteDatabase(RemoteDatabase):
 
-    def __init__(self):
-        self.client = MongoClient(settings.REMOTE_DATABASE_MONGO_URI)
+    def __init__(self, *, loop=None):
+        self._loop = loop or asyncio.get_event_loop()
+        self._executor = ThreadPoolExecutor(max_workers=1)
+        self._executor_run = functools.partial(
+            self._loop.run_in_executor, self._executor
+        )
+        self._client = None
 
-    def get_database(self) -> Iterable[SwitchEntity]:
-        db = self.client.topology_database
-        collection = db.switch_collection
-        return [SwitchEntity.from_dict(doc) for doc in collection.find()]
+    async def get_client(self):
+        if not self._client:
+            self._client = await self._executor_run(
+                lambda: MongoClient(settings.REMOTE_DATABASE_MONGO_URI)
+            )
+        return self._client
 
-    def close(self):
-        self.client.close()
+    async def get_database(self) -> Iterable[SwitchEntity]:
+        client = await self.get_client()
+
+        def f():
+            db = client.topology_database
+            collection = db.switch_collection
+            return [SwitchEntity.from_dict(doc) for doc in collection.find()]
+
+        return await self._executor_run(f)
+
+    async def aclose(self):
+        if self._client:
+            await self._executor_run(self._client.close)
 
 
 class LocalTopologyDatabase:
-    """In-memory storage. Must be thread-safe."""
+    """In-memory storage."""
 
     def __init__(self):
         self.mac_to_switch = {}
         self.relay_switches = []
-        self.lock = threading.Lock()
         self.is_filled = False
-        self.is_filled_event = threading.Event()
+        self.is_filled_event = asyncio.Event()
 
     def update(self, switches):
-        with self.lock:
-            self.mac_to_switch = {switch.mac: switch for switch in switches}
-            self.relay_switches = [switch for switch in switches if switch.is_relay]
-            self.is_filled = True
+        self.mac_to_switch = {switch.mac: switch for switch in switches}
+        self.relay_switches = [switch for switch in switches if switch.is_relay]
+        self.is_filled = True
         self.is_filled_event.set()
 
     def find_switch_by_mac(self, mac):
         """None if not found."""
-        with self.lock:
-            return self.mac_to_switch.get(mac)
+        return self.mac_to_switch.get(mac)
 
     def find_random_relay_switches(self, count=1):
         """Might be less than count."""
-        with self.lock:
-            return list(random.sample(self.relay_switches, count))
-
-
-def update_local_database(topology_database: "TopologyDatabase"):
-    try:
-        topology_database.local.update(topology_database.remote.get_database())
-        for callback in topology_database._local_db_synced_callbacks:
-            callback()
-    except Exception as e:
-        logger.error("Exception in database sync thread", exc_info=True)
+        return list(random.sample(self.relay_switches, count))
 
 
 class TopologyDatabase:
@@ -79,28 +89,46 @@ class TopologyDatabase:
     def __init__(self):
         self.remote = self.remote_database()
         self.local = self.local_database()
-        self._timer = None
+        # self._timer = None
+        self._sync_stop_event = asyncio.Event()
+        self._sync_task = None
         self._local_db_synced_callbacks = []
 
     def add_local_db_synced_callback(self, callback):
         self._local_db_synced_callbacks.append(callback)
 
-    def start_replication_thread(self):
-        assert self._timer is None
-        self._timer = SetIntervalThread(
-            self.database_sync_interval_seconds,
-            update_local_database,
-            args=(self,),
-            run_immediately=True,
-        )
-        self._timer.start()
+    async def __aenter__(self):
+        self._sync_stop_event.clear()
+        self._sync_task = asyncio.ensure_future(self._sync())
+        return self
 
-    def stopjoin_replication_thread(self):
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer.join()
-        self._timer = None
-        self.remote.close()
+    async def __aexit__(self, exc_type, exc_value, exc_tb):
+        self._sync_stop_event.set()
+        self._sync_task.cancel()
+        await self.remote.aclose()
+
+    async def _sync(self):
+        await self._update_local_database()
+        while True:
+            try:
+                await asyncio.wait_for(
+                    self._sync_stop_event.wait(),
+                    timeout=self.database_sync_interval_seconds,
+                )
+                break
+            except asyncio.TimeoutError:
+                pass  # Timeout is good! It means that the loop is not stopped yet.
+            await self._update_local_database()
+
+    async def _update_local_database(self):
+        try:
+            self.local.update(await self.remote.get_database())
+            for callback in self._local_db_synced_callbacks:
+                callback()
+        except CancelledError:
+            pass
+        except Exception as e:
+            logger.error("Exception in the database sync task", exc_info=True)
 
     def find_switch_by_mac(self, mac) -> SwitchEntity:
         switch = self.local.find_switch_by_mac(mac)
@@ -113,26 +141,3 @@ class TopologyDatabase:
         if not switches:
             raise IndexError()
         return switches
-
-
-class SetIntervalThread(threading.Thread):
-
-    def __init__(
-        self, interval, function, args=None, kwargs=None, run_immediately=False
-    ):
-        super().__init__()
-        self.interval = interval
-        self.function = function
-        self.args = args if args is not None else []
-        self.kwargs = kwargs if kwargs is not None else {}
-        self.finished = threading.Event()
-        self.run_immediately = run_immediately
-
-    def cancel(self):
-        self.finished.set()
-
-    def run(self):
-        if self.run_immediately:
-            self.function(*self.args, **self.kwargs)
-        while not self.finished.wait(self.interval):
-            self.function(*self.args, **self.kwargs)
