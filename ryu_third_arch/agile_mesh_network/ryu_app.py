@@ -2,7 +2,6 @@ import asyncio
 import threading
 from contextlib import ExitStack
 from logging import getLogger
-from time import sleep
 
 from async_exit_stack import AsyncExitStack
 from ryu import cfg
@@ -15,7 +14,7 @@ from ryu.ofproto import ofproto_v1_4
 from agile_mesh_network import settings
 from agile_mesh_network.common.models import LayersDescriptionRpcModel
 from agile_mesh_network.common.rpc import RpcUnixClient
-from agile_mesh_network.ryu.topology_database import SwitchEntity, TopologyDatabase
+from agile_mesh_network.ryu.topology_database import TopologyDatabase
 
 logger = getLogger("amn_ryu_app")
 # CONF = cfg.CONF['amn-app']
@@ -115,11 +114,7 @@ class NegotiatorRpc:
         msg = await session.issue_command("dump_tunnels_state")
         assert msg.keys() == {"tunnels"}
         for callback in self._tunnels_changed_callbacks:
-            callback(
-                topic="dump_tunnels_state",
-                tunnel=None,
-                tunnels=msg["tunnels"],
-            )
+            callback(topic="dump_tunnels_state", tunnel=None, tunnels=msg["tunnels"])
         # TODO return??
 
     async def _rpc_command_handler(self, session, msg):
@@ -145,19 +140,72 @@ class AgileMeshNetworkManager:
         await self._stack.aclose()
 
 
+class AgileMeshNetworkManagerThread:
+
+    def __init__(self):
+        self._manager = None
+        self._thread = None
+        self._thread_started_event = threading.Event()
+        self._loop = None
+
+    def __enter__(self):
+        assert self._thread is None
+        self._thread = threading.Thread(target=self._run)
+        self._thread.start()
+        self._thread_started_event.wait()
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        if self._thread is not None and self._thread.is_alive():
+            assert self._loop
+            # self._thread_interrupted = True
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join()
+        self._manager = None
+        self._thread = None
+        self._thread_started_event.clear()
+        self._loop = None
+
+    def _run(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)  # Related to the current thread only.
+        self._loop = loop
+
+        async def enter_stack(stack):
+            manager = await stack.enter_async_context(AgileMeshNetworkManager())
+            return manager
+
+        stack = AsyncExitStack()
+        try:
+            self._manager = loop.run_until_complete(enter_stack(stack))
+            self._thread_started_event.set()
+            loop.run_forever()
+        except Exception as e:
+            logger.error("Uncaught exception in the AMN event loop", exc_info=True)
+            # TODO shutdown the app? It's harmful to keep it alive at this point.
+            # Obviously, everything is horribly broken: there's no manager
+            # controlling the app.
+        finally:
+            logger.info("Shutting down AMN event loop")
+            loop.run_until_complete(stack.aclose())
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            pending = asyncio.Task.all_tasks()
+            loop.run_until_complete(asyncio.gather(*pending))
+            loop.close()
+
+
 class SwitchApp(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_4.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.mac_to_port = {}
-        self.manager = AgileMeshNetworkManager()
-        # TODO asyncio loop
-        # self._stack = ExitStack()
+        self.manager = AgileMeshNetworkManagerThread()
+        self._stack = ExitStack()
 
     def start(self):
+        self._stack.enter_context(self.manager)
         super().start()
-        # self._stack.enter_context(self.manager)
 
     def stop(self):
         self._stack.close()
