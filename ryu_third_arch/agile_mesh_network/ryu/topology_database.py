@@ -81,7 +81,7 @@ class TopologyDatabase:
     def start_replication_thread(self):
         assert self._timer is None
         self._timer = threading.Timer(
-            self.database_sync_interval_seconds, update_local_database, self
+            self.database_sync_interval_seconds, update_local_database, args=(self,)
         )
         self._timer.start()
 

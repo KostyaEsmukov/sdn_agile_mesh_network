@@ -1,6 +1,8 @@
 import asyncio
 import threading
 from contextlib import ExitStack
+from logging import getLogger
+from time import sleep
 
 from async_exit_stack import AsyncExitStack
 from ryu import cfg
@@ -14,6 +16,7 @@ from agile_mesh_network import settings
 from agile_mesh_network.common.rpc import RpcUnixClient
 from agile_mesh_network.ryu.topology_database import SwitchEntity, TopologyDatabase
 
+logger = getLogger('amn_ryu_app')
 # CONF = cfg.CONF['amn-app']
 # TODO https://github.com/osrg/ryu/blob/master/ryu/services/protocols/bgp/application.py
 
@@ -56,21 +59,27 @@ class NegotiatorRpc:
         self.unix_sock_path = unix_sock_path
         self._tunnels_changed_callbacks = []
         self._loop = None
+        self._thread_interrupted = False
+        self._thread_started_event = threading.Event()
 
     def add_tunnels_changed_callback(self, callback):
         self._tunnels_changed_callbacks.append(callback)
 
     def start_thread(self):
         assert self._thread is None
+        self._thread_interrupted = False
         self._thread = threading.Thread(target=self._run)
         self._thread.start()
+        self._thread_started_event.wait()
 
     def stopjoin_thread(self):
         if self._thread is not None and self._thread.is_alive():
             assert self._loop
-            self._loop.stop()
+            self._thread_interrupted = True
+            self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join()
         self._thread = None
+        self._thread_started_event.clear()
 
     # TODO expose RPC commands
 
@@ -79,24 +88,33 @@ class NegotiatorRpc:
         async def command_cb(session, msg):
             pass  # TODO
 
-        async def async_stack():
-            stack = AsyncExitStack()
+        async def async_stack(stack):
             rpc_client = await stack.enter_async_context(
                 RpcUnixClient(self.unix_sock_path, command_cb)
             )
-            return stack, rpc_client
+            return rpc_client
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)  # Relates to the current thread only.
-        self._loop = loop
+        while not self._thread_interrupted:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)  # Relates to the current thread only.
+            self._loop = loop
+            self._thread_started_event.set()
 
-        stack, rpc_client = loop.run_until_complete(async_stack())
-        try:
-            loop.run_forever()
-        finally:
-            loop.run_until_complete(stack.aclose())
-            loop.close()
-            # self._loop = None
+            stack = AsyncExitStack()
+            try:
+                rpc_client = loop.run_until_complete(async_stack(stack))
+                loop.run_forever()
+            except Exception as e:
+                self._handle_thread_exception(e)
+            finally:
+                logger.info('Shutting down RPC event loop')
+                loop.run_until_complete(stack.aclose())
+                loop.close()
+                # self._loop = None
+
+    def _handle_thread_exception(self, e):
+        logger.error('Error in RPC thread', exc_info=e)
+        sleep(1)  # Avoid rapid looping on frequent failures
 
 
 class AgileMeshNetworkManager:
