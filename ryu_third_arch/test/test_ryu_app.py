@@ -58,8 +58,7 @@ class ManagerTestCase(unittest.TestCase):
             },
         )
 
-        self._astack = AsyncExitStack()
-        self._stack = ExitStack()
+        self._stack = AsyncExitStack()
 
         td = self._stack.enter_context(tempfile.TemporaryDirectory())
         self.rpc_unix_sock = os.path.join(td, "l.sock")
@@ -70,13 +69,14 @@ class ManagerTestCase(unittest.TestCase):
         self._stack.enter_context(
             patch.object(settings, "NEGOTIATOR_RPC_UNIX_SOCK_PATH", self.rpc_unix_sock)
         )
+        self._stack.enter_context(patch("agile_mesh_network.ryu_app.OVSManager"))
 
         async def command_cb(session, msg):
             assert isinstance(msg, RpcCommand)
             await self._rpc_command_cb(msg)
 
         self.rpc_server = self.loop.run_until_complete(
-            self._astack.enter_async_context(
+            self._stack.enter_async_context(
                 RpcUnixServer(self.rpc_unix_sock, command_cb)
             )
         )
@@ -86,8 +86,7 @@ class ManagerTestCase(unittest.TestCase):
         await msg.respond({"tunnels": []})
 
     def tearDown(self):
-        self.loop.run_until_complete(self._astack.aclose())
-        self._stack.close()
+        self.loop.run_until_complete(self._stack.aclose())
 
         self.loop.run_until_complete(self.loop.shutdown_asyncgens())
         self.loop.close()

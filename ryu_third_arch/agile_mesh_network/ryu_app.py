@@ -33,7 +33,10 @@ class NetworkView:
 
     # TODO deal with L2 loops
     def __init__(
-        self, topology_database: TopologyDatabase, negotiator_rpc: "NegotiatorRpc"
+        self,
+        topology_database: TopologyDatabase,
+        negotiator_rpc: "NegotiatorRpc",
+        ovs_manager: "OVSManager",
     ) -> None:
         self.topology_database = topology_database
         topology_database.add_local_db_synced_callback(self._event_db_synced)
@@ -42,6 +45,8 @@ class NetworkView:
         negotiator_rpc.add_tunnels_changed_callback(
             self._event_negotiator_tunnels_update
         )
+
+        self.ovs_manager = ovs_manager
 
         # TODO state: ovsdb tunnels list
         # TODO state: negotiator tunnels list
@@ -132,11 +137,18 @@ class AgileMeshNetworkManager:
     def __init__(self):
         self.topology_database = TopologyDatabase()
         self.negotiator_rpc = NegotiatorRpc(settings.NEGOTIATOR_RPC_UNIX_SOCK_PATH)
-        self.network_view = NetworkView(self.topology_database, self.negotiator_rpc)
+        self.ovs_manager = OVSManager(
+            datapath_id=settings.OVS_DATAPATH_ID,
+            # TODO ryu_app.CONF?
+        )
+        self.network_view = NetworkView(
+            self.topology_database, self.negotiator_rpc, self.ovs_manager
+        )
         self._stack = AsyncExitStack()
 
     async def __aenter__(self):
         try:
+            self._stack.enter_context(self.ovs_manager)
             await self._stack.enter_async_context(self.topology_database)
             await self._stack.enter_async_context(self.negotiator_rpc)
         except:
@@ -207,7 +219,7 @@ class RyuConfMock:
     ovsdb_timeout = 2
 
 
-class OVSWrapper:
+class OVSManager:
 
     def __init__(self, datapath_id, CONF=RyuConfMock):
         ovsdb_addr = "tcp:%s:%d" % ("127.0.0.1", OVSDB_PORT)
