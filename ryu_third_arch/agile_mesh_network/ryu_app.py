@@ -132,8 +132,12 @@ class AgileMeshNetworkManager:
         self._stack = AsyncExitStack()
 
     async def __aenter__(self):
-        await self._stack.enter_async_context(self.topology_database)
-        await self._stack.enter_async_context(self.negotiator_rpc)
+        try:
+            await self._stack.enter_async_context(self.topology_database)
+            await self._stack.enter_async_context(self.negotiator_rpc)
+        except:
+            await self._stack.aclose()
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
