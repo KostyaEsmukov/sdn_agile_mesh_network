@@ -3,11 +3,13 @@ import threading
 from contextlib import ExitStack
 from logging import getLogger
 
+import ryu.lib.ovs.vsctl as ovs_vsctl
 from async_exit_stack import AsyncExitStack
 from ryu import cfg
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
+from ryu.lib.ovs import bridge as ovs_bridge
 from ryu.lib.packet import ether_types, ethernet, packet
 from ryu.ofproto import ofproto_v1_4
 
@@ -19,6 +21,8 @@ from agile_mesh_network.ryu.topology_database import TopologyDatabase
 logger = getLogger("amn_ryu_app")
 # CONF = cfg.CONF['amn-app']
 # TODO https://github.com/osrg/ryu/blob/master/ryu/services/protocols/bgp/application.py
+
+OVSDB_PORT = 6640  # The IANA registered port for OVSDB [RFC7047]
 
 
 class NetworkView:
@@ -196,6 +200,71 @@ class AgileMeshNetworkManagerThread:
             pending = asyncio.Task.all_tasks()
             loop.run_until_complete(asyncio.gather(*pending))
             loop.close()
+
+
+class RyuConfMock:
+    """Can be used instead of ryu_app.CONF."""
+    ovsdb_timeout = 2
+
+
+class OVSWrapper:
+
+    def __init__(self, datapath_id, CONF=RyuConfMock):
+        ovsdb_addr = "tcp:%s:%d" % ("127.0.0.1", OVSDB_PORT)
+        self.ovs = ovs_bridge.OVSBridge(
+            CONF=CONF, datapath_id=datapath_id, ovsdb_addr=ovsdb_addr
+        )
+        self._lock = threading.Lock()
+
+    def __enter__(self):
+        self.ovs.init()
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        pass
+
+    def is_port_up(self, port_name):
+        with self._lock:
+            ports = set(self.ovs.get_port_name_list())
+            if port_name not in ports:
+                return False
+            return self._is_port_up(port_name)
+
+    def add_port_to_bridge(self, port_name):
+        with self._lock:
+            command = ovs_vsctl.VSCtlCommand(
+                "add-port", (self.ovs.br_name, port_name), "--may-exist"
+            )
+            self.ovs.run_command([command])
+
+    def del_port_from_bridge(self, port_name):
+        with self._lock:
+            self._del_port(port_name)
+
+    def del_all_down_ports(self):
+        with self._lock:
+            ports = set(self.ovs.get_port_name_list())
+            down_ports = [port for port in ports if not self._is_port_up(port)]
+            for port in down_ports:
+                self._del_port(port)
+            return down_ports
+
+    def _is_port_up(self, port_name):
+        if self.ovs.get_ofport(port_name) < 0:
+            # Interface is on the OVS DB, but is missing in the OS.
+            return False
+        link_state = self.ovs.db_get_val("Interface", port_name, "link_state")
+        if link_state != ["up"]:
+            # []  -- interface doesn't exist
+            # ['down']  -- interface is down
+            # ['up']  -- interface is up
+            return False
+        # Also there's `admin_state`.
+        return True
+
+    def _del_port(self, port_name):
+        command = ovs_vsctl.VSCtlCommand("del-port", (self.ovs.br_name, port_name))
+        self.ovs.run_command([command])
 
 
 class SwitchApp(app_manager.RyuApp):
