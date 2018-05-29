@@ -10,6 +10,7 @@ from agile_mesh_network.common.async_utils import (
     future_set_exception_silent, future_set_result_silent
 )
 from agile_mesh_network.common.models import LayersDescriptionModel
+from agile_mesh_network.common.tun_mapper import mac_to_tun_name
 from agile_mesh_network.negotiator.tunnel_protocols import PipeContext
 
 
@@ -105,7 +106,7 @@ class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
 
     def __init__(self, dst_mac, openvpn_options, pipe_context: PipeContext) -> None:
         self._process_transport = None
-        self.tun_dev_name = f'tap{dst_mac.replace(":", "")}'
+        self.tun_dev_name = mac_to_tun_name(dst_mac)
         self._pipe_context = pipe_context
         # TODO ?? setup configs, certs
 
@@ -161,6 +162,10 @@ class OpenvpnResponderProcessManager(BaseOpenvpnProcessManager):
             openvpn_config.server_config_path,
             "--cd",
             cd,
+            "--dev-type",
+            "tap",
+            "--dev",
+            self.tun_dev_name,
         )
 
 
@@ -187,6 +192,10 @@ class OpenvpnInitiatorProcessManager(BaseOpenvpnProcessManager):
             openvpn_config.client_config_path,
             "--cd",
             cd,
+            "--dev-type",
+            "tap",
+            "--dev",
+            self.tun_dev_name,
         )
 
 
