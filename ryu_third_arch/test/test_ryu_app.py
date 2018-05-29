@@ -95,26 +95,41 @@ class ManagerTestCase(unittest.TestCase):
         self.server.stop()
 
     def test_topology_database_sync(self):
+        unk_mac = "99:99:99:88:88:88"
 
         async def f():
             async with AgileMeshNetworkManager() as manager:
-                local_database = manager.topology_database.local
+                topology_database = manager.topology_database
+                local_database = topology_database.local
                 await asyncio.wait_for(local_database.is_filled_event.wait(), timeout=2)
                 self.assertTrue(local_database.is_filled)
 
                 self.assertListEqual(
-                    manager.topology_database.find_random_relay_switches(),
+                    topology_database.find_random_relay_switches(),
                     [SwitchEntity(**SWITCH_ENTITY_RELAY_DATA)],
                 )
 
                 with self.assertRaises(KeyError):
-                    manager.topology_database.find_switch_by_mac("99:99:99:88:88:88")
+                    topology_database.find_switch_by_mac(unk_mac)
 
                 self.assertEqual(
-                    manager.topology_database.find_switch_by_mac(
+                    topology_database.find_switch_by_mac(
                         SWITCH_ENTITY_BOARD_DATA["mac"]
                     ),
                     SwitchEntity(**SWITCH_ENTITY_BOARD_DATA),
+                )
+
+                self.assertListEqual(
+                    topology_database.find_switches_by_mac_list([]), []
+                )
+                self.assertListEqual(
+                    topology_database.find_switches_by_mac_list([unk_mac]), []
+                )
+                self.assertListEqual(
+                    topology_database.find_switches_by_mac_list(
+                        [unk_mac, SWITCH_ENTITY_BOARD_DATA["mac"]]
+                    ),
+                    [SwitchEntity(**SWITCH_ENTITY_BOARD_DATA)],
                 )
 
                 # TODO after resync extra tunnels/flows are destroyed

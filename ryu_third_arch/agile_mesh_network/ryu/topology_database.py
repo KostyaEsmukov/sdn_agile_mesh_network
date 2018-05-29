@@ -4,7 +4,7 @@ import random
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import CancelledError, ThreadPoolExecutor
 from logging import getLogger
-from typing import Iterable, List
+from typing import Iterable, List, Sequence
 
 from pymongo import MongoClient
 
@@ -76,6 +76,10 @@ class LocalTopologyDatabase:
         """None if not found."""
         return self.mac_to_switch.get(mac)
 
+    def find_switches_by_mac_list(self, mac_list):
+        g = (self.mac_to_switch.get(mac) for mac in mac_list)
+        return [sw for sw in g if sw is not None]
+
     def find_random_relay_switches(self, count=1):
         """Might be less than count."""
         return list(random.sample(self.relay_switches, count))
@@ -135,6 +139,9 @@ class TopologyDatabase:
         if not switch:
             raise KeyError()
         return switch
+
+    def find_switches_by_mac_list(self, mac_list) -> Sequence[SwitchEntity]:
+        return self.local.find_switches_by_mac_list(mac_list)
 
     def find_random_relay_switches(self, count=1) -> List[SwitchEntity]:
         switches = list(self.local.find_random_relay_switches(count))
