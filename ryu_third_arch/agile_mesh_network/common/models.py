@@ -57,7 +57,8 @@ class SwitchEntity:
     hostname: str
     is_relay: bool
     mac: str
-    layers_config: Any  # TODO
+    layers_config: Any  # TODO model.
+    # TODO allow switches to dynamically set their own IP addresses.
 
     @classmethod
     def from_dict(cls, kwargs):

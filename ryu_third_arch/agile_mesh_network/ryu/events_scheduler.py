@@ -26,6 +26,9 @@ class RyuAppEventLoopScheduler:
     to provide a thread-safe way to enqueue an event to the Queue.
     The instance of this class must be created in the same thread as
     the Ryu application (i.e. the main thread).
+
+    Ryu app architecture: https://osrg.github.io/ryu-book/en/html/arch.html
+    Events: http://ryu.readthedocs.io/en/latest/ryu_app_api.html
     """
 
     def __init__(self, ryu_app):
@@ -38,6 +41,8 @@ class RyuAppEventLoopScheduler:
         assert hub.HUB_TYPE == "eventlet"
         with self._lock:
             self._dark, self._green = _dark_green_pipe()
+            # TODO is it okay to assume that the connection between
+            # the sockets never breaks unless it is explicitly closed?
         self._green_thread = eventlet.spawn(self._eventlet_run)
         return self
 

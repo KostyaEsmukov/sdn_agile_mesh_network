@@ -156,6 +156,8 @@ class OpenvpnResponderProcessManager(BaseOpenvpnProcessManager):
         return tuple(
             "--mode",
             "server",
+            "--proto",
+            "tcp-server",
             "--port",
             str(self._local_port),
             "--config",
@@ -185,6 +187,8 @@ class OpenvpnInitiatorProcessManager(BaseOpenvpnProcessManager):
         return tuple(
             "--mode",
             "client",
+            "--proto",
+            "tcp-client",
             "--remote",
             "127.0.0.1",
             str(self._local_port),
