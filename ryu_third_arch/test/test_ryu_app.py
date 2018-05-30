@@ -12,7 +12,8 @@ from mockupdb import Command, MockupDB
 from agile_mesh_network import settings
 from agile_mesh_network.common.models import SwitchEntity
 from agile_mesh_network.common.rpc import RpcCommand, RpcUnixServer
-from agile_mesh_network.ryu_app import AgileMeshNetworkManager
+from agile_mesh_network.ryu import events_scheduler
+from agile_mesh_network.ryu_app import AgileMeshNetworkManager, SwitchApp
 
 LOCAL_MAC = "00:11:22:33:00:00"
 SWITCH_ENTITY_RELAY_DATA = {
@@ -71,6 +72,12 @@ class ManagerTestCase(unittest.TestCase):
         )
         self._stack.enter_context(patch("agile_mesh_network.ryu_app.OVSManager"))
 
+        self._stack.enter_context(
+            patch.object(events_scheduler, "RyuAppEventLoopScheduler")
+        )
+        self.ryu_ev_loop_scheduler = events_scheduler.RyuAppEventLoopScheduler()
+        self._stack.enter_context(self.ryu_ev_loop_scheduler)
+
         async def command_cb(session, msg):
             assert isinstance(msg, RpcCommand)
             await self._rpc_command_cb(msg)
@@ -97,7 +104,9 @@ class ManagerTestCase(unittest.TestCase):
         unk_mac = "99:99:99:88:88:88"
 
         async def f():
-            async with AgileMeshNetworkManager() as manager:
+            async with AgileMeshNetworkManager(
+                ryu_ev_loop_scheduler=self.ryu_ev_loop_scheduler
+            ) as manager:
                 topology_database = manager.topology_database
                 local_database = topology_database.local
                 await asyncio.wait_for(local_database.is_filled_event.wait(), timeout=2)
@@ -145,7 +154,9 @@ class ManagerTestCase(unittest.TestCase):
 
             with patch.object(self, "_rpc_command_cb", _rpc_command_cb):
 
-                async with AgileMeshNetworkManager() as manager:
+                async with AgileMeshNetworkManager(
+                    ryu_ev_loop_scheduler=self.ryu_ev_loop_scheduler
+                ) as manager:
                     neg = manager.negotiator_rpc
                     # await neg.list_tunnels()
                     await neg._initial_sync_task
@@ -164,10 +175,25 @@ class ManagerTestCase(unittest.TestCase):
     def test_flows(self):
 
         async def f():
-            async with AgileMeshNetworkManager() as manager:
+            async with AgileMeshNetworkManager(
+                ryu_ev_loop_scheduler=self.ryu_ev_loop_scheduler
+            ) as manager:
                 # TODO missing flows from RPC sync are added
                 # TODO after packet in a tunnel creation request is sent
                 # TODO after tunnel creation a flow is set up
                 pass
 
         self.loop.run_until_complete(f())
+
+
+# class RyuAppTestCase(unittest.TestCase):
+
+#     def setUp(self):
+#         self.app = SwitchApp()
+#         self.app.start()
+
+#     def tearDown(self):
+#         self.app.stop()
+
+#     def test(self):
+#         pass

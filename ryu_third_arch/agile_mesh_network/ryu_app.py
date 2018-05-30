@@ -8,6 +8,7 @@ from async_exit_stack import AsyncExitStack
 from ryu import cfg
 from ryu.base import app_manager
 from ryu.controller import ofp_event
+from ryu.controller.event import EventBase
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
 from ryu.lib.ovs import bridge as ovs_bridge
 from ryu.lib.packet import ether_types, ethernet, packet
@@ -16,6 +17,7 @@ from ryu.ofproto import ofproto_v1_4
 from agile_mesh_network import settings
 from agile_mesh_network.common.models import LayersDescriptionRpcModel
 from agile_mesh_network.common.rpc import RpcUnixClient
+from agile_mesh_network.ryu.events_scheduler import RyuAppEventLoopScheduler
 from agile_mesh_network.ryu.topology_database import TopologyDatabase
 
 logger = getLogger("amn_ryu_app")
@@ -37,6 +39,7 @@ class NetworkView:
         topology_database: TopologyDatabase,
         negotiator_rpc: "NegotiatorRpc",
         ovs_manager: "OVSManager",
+        ryu_ev_loop_scheduler: "RyuAppEventLoopScheduler",
     ) -> None:
         self.topology_database = topology_database
         topology_database.add_local_db_synced_callback(self._event_db_synced)
@@ -47,6 +50,7 @@ class NetworkView:
         )
 
         self.ovs_manager = ovs_manager
+        self.ryu_ev_loop_scheduler = ryu_ev_loop_scheduler
 
         # TODO state: ovsdb tunnels list
         # TODO state: negotiator tunnels list
@@ -134,7 +138,8 @@ class NegotiatorRpc:
 
 class AgileMeshNetworkManager:
 
-    def __init__(self):
+    def __init__(self, *, ryu_ev_loop_scheduler):
+        self.ryu_ev_loop_scheduler = ryu_ev_loop_scheduler
         self.topology_database = TopologyDatabase()
         self.negotiator_rpc = NegotiatorRpc(settings.NEGOTIATOR_RPC_UNIX_SOCK_PATH)
         self.ovs_manager = OVSManager(
@@ -142,7 +147,10 @@ class AgileMeshNetworkManager:
             # TODO ryu_app.CONF?
         )
         self.network_view = NetworkView(
-            self.topology_database, self.negotiator_rpc, self.ovs_manager
+            self.topology_database,
+            self.negotiator_rpc,
+            self.ovs_manager,
+            self.ryu_ev_loop_scheduler,
         )
         self._stack = AsyncExitStack()
 
@@ -162,11 +170,12 @@ class AgileMeshNetworkManager:
 
 class AgileMeshNetworkManagerThread:
 
-    def __init__(self):
+    def __init__(self, **amn_kwargs):
         self._manager = None
         self._thread = None
         self._thread_started_event = threading.Event()
         self._loop = None
+        self._amn_kwargs = amn_kwargs
 
     def __enter__(self):
         assert self._thread is None
@@ -192,7 +201,9 @@ class AgileMeshNetworkManagerThread:
         self._loop = loop
 
         async def enter_stack(stack):
-            manager = await stack.enter_async_context(AgileMeshNetworkManager())
+            manager = await stack.enter_async_context(
+                AgileMeshNetworkManager(**self._amn_kwargs)
+            )
             return manager
 
         stack = AsyncExitStack()
@@ -285,11 +296,19 @@ class SwitchApp(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.mac_to_port = {}
-        self.manager = AgileMeshNetworkManagerThread()
+        self._ryu_ev_loop_scheduler = RyuAppEventLoopScheduler(self)
+        self.manager = AgileMeshNetworkManagerThread(
+            ryu_ev_loop_scheduler=self._ryu_ev_loop_scheduler
+        )
         self._stack = ExitStack()
 
     def start(self):
-        self._stack.enter_context(self.manager)
+        try:
+            self._stack.enter_context(self._ryu_ev_loop_scheduler)
+            self._stack.enter_context(self.manager)
+        except:
+            self._stack.close()
+            raise
         super().start()
 
     def stop(self):
