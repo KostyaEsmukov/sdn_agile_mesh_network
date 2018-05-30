@@ -1,5 +1,6 @@
 import asyncio
 import threading
+from concurrent.futures import CancelledError
 from contextlib import ExitStack
 from logging import getLogger
 
@@ -85,6 +86,7 @@ class NegotiatorRpc:
             self._rpc = await self._stack.enter_async_context(
                 RpcUnixClient(self.unix_sock_path, self._rpc_command_handler)
             )
+            # TODO recover on connection loss?
         return self._rpc.session
 
     async def __aenter__(self):
@@ -97,10 +99,15 @@ class NegotiatorRpc:
         await self._stack.aclose()
 
     async def _initial_sync(self):
-        try:
-            await self.list_tunnels()
-        except:
-            logger.error("Negotiator initial sync failed", exc_info=True)
+        while True:
+            try:
+                await self.list_tunnels()
+                break
+            except CancelledError:
+                break
+            except:
+                logger.error("Negotiator initial sync failed", exc_info=True)
+                await asyncio.sleep(5)
 
     async def start_tunnel(
         self, src_mac, dst_mac, timeout, layers: LayersDescriptionRpcModel
@@ -179,7 +186,7 @@ class AgileMeshNetworkManagerThread:
 
     def __enter__(self):
         assert self._thread is None
-        self._thread = threading.Thread(target=self._run)
+        self._thread = threading.Thread(target=self._run, name=type(self).__name__)
         self._thread.start()
         self._thread_started_event.wait()
         return self
@@ -221,7 +228,7 @@ class AgileMeshNetworkManagerThread:
             loop.run_until_complete(stack.aclose())
             loop.run_until_complete(loop.shutdown_asyncgens())
             pending = asyncio.Task.all_tasks()
-            loop.run_until_complete(asyncio.gather(*pending))
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             loop.close()
 
 

@@ -299,7 +299,7 @@ def negotiator(
         loop.run_until_complete(stack.aclose())
         loop.run_until_complete(loop.shutdown_asyncgens())
         pending = asyncio.Task.all_tasks()
-        loop.run_until_complete(asyncio.gather(*pending))
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         loop.close()
 
 

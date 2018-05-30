@@ -38,22 +38,25 @@ class RyuAppEventLoopScheduler:
         assert hub.HUB_TYPE == "eventlet"
         with self._lock:
             self._dark, self._green = _dark_green_pipe()
-        self._green_thread = eventlet.spawn(self._eventlet_loop)
+        self._green_thread = eventlet.spawn(self._eventlet_run)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         with self._lock:
             self._dark.close()
-        self._green.close()
+        # Don't close the self._green here: it's not safe. The green
+        # side will detect that the dark side has gone away.
         self._green_thread.wait()
 
-    def _eventlet_loop(self):
+    def _eventlet_run(self):
         while True:
-            size = self._green.recv(4, socket.MSG_WAITALL)  # size of "!i" is 4 bytes
-            if not size:
+            buf_size = self._green.recv(
+                4, socket.MSG_WAITALL
+            )  # size of "!i" is 4 bytes
+            if not buf_size:
                 break
-            size, = struct.unpack("!i", size)
-            buf = self._green.recv(size, socket.MSG_WAITALL)
+            buf_size, = struct.unpack("!i", buf_size)
+            buf = self._green.recv(buf_size, socket.MSG_WAITALL)
             if not buf:
                 break
             ev = pickle.loads(buf)
