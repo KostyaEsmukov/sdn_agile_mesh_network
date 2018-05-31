@@ -75,10 +75,15 @@ class RpcSession:
         self.transport.write(payload.encode())
         fut: Awaitable[Any] = asyncio.Future()
         self.msg_id_to_future[msg_id] = fut
+        # Note that this future might get cancelled, that would leave it
+        # in the self.msg_id_to_future dict in a finalized state.
         return await fut
 
     def close(self):
         for fut in self.msg_id_to_future.values():
+            if fut.done():
+                assert fut.cancelled()
+                continue
             fut.set_exception(OSError("connection closed"))
         self.msg_id_to_future.clear()
         self.transport.close()
@@ -95,14 +100,18 @@ class RpcSession:
             return RpcBroadcast(name, kwargs)
         if msg_type == "c":  # incoming command
             return RpcCommand(name, kwargs, self.transport, msg_id)
+
+        fut = self.msg_id_to_future.pop(msg_id)
+        if fut.done():
+            assert fut.cancelled()
+            return None
+
         if msg_type == "r":  # response to our command
             assert not name
-            fut = self.msg_id_to_future.pop(msg_id)
             fut.set_result(kwargs)
             return None
         if msg_type == "re":  # erroneous response to our command
             assert not name
-            fut = self.msg_id_to_future.pop(msg_id)
             type_str = kwargs["type"]
             type_ = getattr(builtins, type_str, None)
             if not type_ or not issubclass(type_, Exception):
