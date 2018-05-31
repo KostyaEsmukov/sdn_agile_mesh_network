@@ -30,7 +30,7 @@ class FromDictMixin:
         return cls(**kwargs)
 
 
-@dataclass
+@dataclass(order=True)
 class TunnelModel(AsDictMixin, FromDictMixin):
     src_mac: str
     dst_mac: str
@@ -46,7 +46,7 @@ class LayersDescriptionModel(AsDictMixin):
 
 
 @dataclass
-class LayersDescriptionRpcModel(LayersDescriptionModel, AsDictMixin):
+class LayersDescriptionRpcModel(LayersDescriptionModel, AsDictMixin, FromDictMixin):
     dest: Any
 
 
@@ -65,5 +65,5 @@ class SwitchEntity(FromDictMixin):
     hostname: str
     is_relay: bool
     mac: str
-    layers_config: Any  # TODO model.
+    layers_config: Any  # TODO model. LayersDescriptionRpcModel?
     # TODO allow switches to dynamically set their own IP addresses.

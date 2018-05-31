@@ -17,7 +17,9 @@ from ryu.lib.packet import ether_types, ethernet, packet
 from ryu.ofproto import ofproto_v1_4
 
 from agile_mesh_network import settings
-from agile_mesh_network.common.models import LayersDescriptionRpcModel, TunnelModel
+from agile_mesh_network.common.models import (
+    LayersDescriptionRpcModel, SwitchEntity, TunnelModel
+)
 from agile_mesh_network.common.rpc import RpcUnixClient
 from agile_mesh_network.ryu.events_scheduler import RyuAppEventLoopScheduler
 from agile_mesh_network.ryu.topology_database import TopologyDatabase
@@ -71,12 +73,12 @@ class NegotiatorRpc:
         self._call_callbacks("create_tunnel", msg)
         # TODO return??
 
-    async def list_tunnels(self):
+    async def list_tunnels(self) -> Sequence[TunnelModel]:
         session = await self._get_session()
         msg = await session.issue_command("dump_tunnels_state")
         assert msg.keys() == {"tunnels"}
         self._call_callbacks("dump_tunnels_state", msg)
-        # TODO return??
+        return [TunnelModel.from_dict(d) for d in msg["tunnels"]]
 
     async def _rpc_command_handler(self, session, msg):
         assert msg.keys() == {"tunnels"}
@@ -134,17 +136,35 @@ class AgileMeshNetworkManager:
         logger.info("Initial sync: waiting for Local DB to initialize")
         await self.topology_database.local.is_filled_event.wait()
         logger.info("Initial sync: retrieving tunnels from negotiator")
+        tunnels = None
         while True:
             try:
-                await self.negotiator_rpc.list_tunnels()
+                tunnels = await self.negotiator_rpc.list_tunnels()
                 break
             except CancelledError:
                 break
             except:
                 logger.error("Negotiator initial sync failed", exc_info=True)
                 await asyncio.sleep(5)
-            else:
-                logger.info("Initial sync: complete")
+        while True:
+            relay_switch = None
+            try:
+                if self._is_relay_connected(tunnels):
+                    logger.info('Negotiator initial sync: relay is already connected')
+                else:
+                    # TODO support multiple switches?
+                    relay_switch, = self.topology_database.find_random_relay_switches(1)
+                    logger.info('Negotiator initial sync: connecting to %s', relay_switch)
+                    await self.connect_switch(relay_switch)
+                break
+            except CancelledError:
+                break
+            except:
+                logger.error(
+                    "Failed to connect to relay switch %s", relay_switch, exc_info=True
+                )
+                await asyncio.sleep(5)
+        logger.info("Initial sync: complete")
         # TODO init remote connection
 
     # These methods are called from other threads, so they must be
@@ -165,6 +185,28 @@ class AgileMeshNetworkManager:
 
         logger.debug("Processing a list of tunnels from Negotiator: %s", tunnels)
 
+        valid, invalid, mac_to_tunnel, mac_to_switch = self._filter_tunnels(tunnels)
+
+        valid_tunnels = [mac_to_tunnel[mac] for mac in valid]
+        invalid_tunnels = [mac_to_tunnel[mac] for mac in invalid]
+        logger.debug(
+            "Negotiator tunnels processed. Valid: %s. Invalid: %s",
+            valid_tunnels,
+            invalid_tunnels,
+        )
+
+        # TODO for invalid_tunnels - send tunnel_stop command to negotiator
+
+        # TODO ?? maybe don't always make a full sync, but use more granular
+        # events (like a tunnel has been added/removed)?
+        self.ryu_ev_loop_scheduler.send_event_to_observers(
+            EventActiveTunnelsList(valid_tunnels)
+        )
+
+    def _event_flow_packet_in(self):
+        pass  # TODO
+
+    def _filter_tunnels(self, tunnels):
         for t in tunnels:
             assert t.src_mac == self.ovs_manager.bridge_mac, (
                 f"Negotiator accepted a tunnel which src MAC {t.src_mac} doesn't "
@@ -178,26 +220,29 @@ class AgileMeshNetworkManager:
         mac_to_tunnel = {t.dst_mac: t for t in tunnels}
         mac_to_switch = {s.mac: s for s in existing_switches}
 
-        valid_tunnels = [
-            mac_to_tunnel[mac] for mac in mac_to_tunnel.keys() & mac_to_switch.keys()
-        ]
-        invalid_tunnels = [
-            mac_to_tunnel[mac] for mac in mac_to_tunnel.keys() - mac_to_switch.keys()
-        ]
-        logger.debug(
-            "Negotiator tunnels processed. Valid: %s. Invalid: %s",
-            valid_tunnels,
-            invalid_tunnels,
-        )
+        valid_tunnels = list(mac_to_tunnel.keys() & mac_to_switch.keys())
+        invalid_tunnels = list(mac_to_tunnel.keys() - mac_to_switch.keys())
+        return valid_tunnels, invalid_tunnels, mac_to_tunnel, mac_to_switch
 
-        # TODO for invalid_tunnels - send tunnel_stop command to negotiator
+    def _is_relay_connected(self, tunnels):
+        if settings.IS_RELAY:
+            return True
+        valid, _, _, mac_to_switch = self._filter_tunnels(tunnels)
+        relays = [mac_to_switch[m] for m in valid if mac_to_switch[m].is_relay]
+        assert len(relays) <= 1  # TODO drop extra
+        if relays:
+            logger.info("Relay is connected: %s", relays[0])
+        return bool(relays)
 
-        self.ryu_ev_loop_scheduler.send_event_to_observers(
-            EventActiveTunnelsList(valid_tunnels)
-        )
-
-    def _event_flow_packet_in(self):
-        pass  # TODO
+    async def connect_switch(self, switch: SwitchEntity):
+        # TODO layers? udp? negotiation?
+        layers = LayersDescriptionRpcModel.from_dict(switch.layers_config)
+        await self.negotiator_rpc.start_tunnel(
+            src_mac=self.ovs_manager.bridge_mac,
+            dst_mac=switch.mac,
+            timeout=20,
+            layers=layers,
+        )  # TODO track result? timeout?
 
 
 class AgileMeshNetworkManagerThread:

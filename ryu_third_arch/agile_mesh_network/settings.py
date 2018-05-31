@@ -1,4 +1,5 @@
 import os
+from ast import literal_eval
 
 REMOTE_DATABASE_MONGO_URI = os.getenv(
     "AMN_REMOTE_DATABASE_MONGO_URI", "mongodb://localhost:27017/"
@@ -23,3 +24,5 @@ fernet_keys_strings = os.getenv(
 LAYERS_MANAGER_BALANCER_FERNET_KEYS = [x.encode() for x in fernet_keys_strings if x]
 
 OVS_DATAPATH_ID = int(os.getenv("AMN_OVS_DATAPATH_ID", "0000001122333301"), 16)
+
+IS_RELAY = literal_eval(os.getenv("AMN_IS_RELAY", "False"))

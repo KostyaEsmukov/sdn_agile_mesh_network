@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from contextlib import ExitStack
+from itertools import zip_longest
 from unittest.mock import patch
 
 from async_exit_stack import AsyncExitStack
@@ -19,13 +20,21 @@ SWITCH_ENTITY_RELAY_DATA = {
     "hostname": "relay1",
     "is_relay": True,
     "mac": "00:11:22:33:44:00",
-    "layers_config": {},
+    "layers_config": {
+        "dest": ["192.0.2.0", 65000],
+        "protocol": "tcp",
+        "layers": {"openvpn": {}},
+    },
 }
 SWITCH_ENTITY_BOARD_DATA = {
     "hostname": "board1",
     "is_relay": False,
     "mac": "00:11:22:33:44:01",
-    "layers_config": {},
+    "layers_config": {
+        "dest": ["192.0.2.1", 65000],
+        "protocol": "tcp",
+        "layers": {"openvpn": {}},
+    },
 }
 TOPOLOGY_DATABASE_DATA = [SWITCH_ENTITY_RELAY_DATA, SWITCH_ENTITY_BOARD_DATA]
 
@@ -37,8 +46,23 @@ SAMPLE_TUNNEL_DATA = {
     "layers": ["openvpn"],
 }
 
+SAMPLE_RELAY_TUNNEL_DATA = {
+    **SAMPLE_TUNNEL_DATA,
+    "dst_mac": SWITCH_ENTITY_RELAY_DATA["mac"],
+}
+
+
+def zip_equal(*iterables):
+    # https://stackoverflow.com/a/32954700
+    sentinel = object()
+    for combo in zip_longest(*iterables, fillvalue=sentinel):
+        if sentinel in combo:
+            raise ValueError("Iterables have different lengths")
+        yield combo
+
 
 class ManagerTestCase(unittest.TestCase):
+    maxDiff = None  # unittest: show full diff on assertion failure
 
     def setUp(self):
         self.loop = asyncio.new_event_loop()
@@ -71,6 +95,10 @@ class ManagerTestCase(unittest.TestCase):
         )
         self._stack.enter_context(
             patch("agile_mesh_network.ryu_app.OVSManager", DummyOVSManager)
+        )
+        self._stack.enter_context(
+            # To avoid automatic connection to a relay.
+            patch.object(settings, "IS_RELAY", True)
         )
 
         self._stack.enter_context(
@@ -110,7 +138,7 @@ class ManagerTestCase(unittest.TestCase):
             ) as manager:
                 topology_database = manager.topology_database
                 local_database = topology_database.local
-                await asyncio.wait_for(local_database.is_filled_event.wait(), timeout=2)
+                await local_database.is_filled_event.wait()
                 self.assertTrue(local_database.is_filled)
 
                 self.assertListEqual(
@@ -143,17 +171,34 @@ class ManagerTestCase(unittest.TestCase):
 
                 # TODO after resync extra tunnels/flows are destroyed
 
-        self.loop.run_until_complete(f())
+        self.loop.run_until_complete(asyncio.wait_for(f(), timeout=3))
 
     def test_rpc(self):
 
         async def f():
+            rpc_responses = iter(
+                [
+                    ("dump_tunnels_state", {"tunnels": [SAMPLE_TUNNEL_DATA]}),
+                    (
+                        "create_tunnel",
+                        {
+                            "tunnel": SAMPLE_RELAY_TUNNEL_DATA,
+                            "tunnels": [SAMPLE_TUNNEL_DATA, SAMPLE_RELAY_TUNNEL_DATA],
+                        },
+                    ),
+                ]
+            )
 
             async def _rpc_command_cb(msg: RpcCommand):
-                self.assertEqual(msg.name, "dump_tunnels_state")
-                await msg.respond({"tunnels": [SAMPLE_TUNNEL_DATA]})
+                name, resp = next(rpc_responses)
+                self.assertEqual(msg.name, name)
+                await msg.respond(resp)
 
-            with patch.object(self, "_rpc_command_cb", _rpc_command_cb):
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch.object(self, "_rpc_command_cb", _rpc_command_cb)
+                )
+                stack.enter_context(patch.object(settings, "IS_RELAY", False))
 
                 async with AgileMeshNetworkManager(
                     ryu_ev_loop_scheduler=self.ryu_ev_loop_scheduler
@@ -166,13 +211,21 @@ class ManagerTestCase(unittest.TestCase):
 
                     # TODO unknown tunnels after resync are dropped via RPC
 
-            args, kwargs = self.ryu_ev_loop_scheduler.send_event_to_observers.call_args
-            ev = args[0]
-            self.assertListEqual(
-                ev.tunnels, [TunnelModel.from_dict(SAMPLE_TUNNEL_DATA)]
-            )
+            expected_event_calls = [
+                [TunnelModel.from_dict(SAMPLE_TUNNEL_DATA)],
+                [
+                    TunnelModel.from_dict(SAMPLE_TUNNEL_DATA),
+                    TunnelModel.from_dict(SAMPLE_RELAY_TUNNEL_DATA),
+                ],
+            ]
+            for (args, kwargs), ev_expected in zip_equal(
+                self.ryu_ev_loop_scheduler.send_event_to_observers.call_args_list,
+                expected_event_calls,
+            ):
+                ev = args[0]
+                self.assertListEqual(sorted(ev.tunnels), sorted(ev_expected))
 
-        self.loop.run_until_complete(f())
+        self.loop.run_until_complete(asyncio.wait_for(f(), timeout=3))
 
     def test_flows(self):
 
@@ -185,7 +238,7 @@ class ManagerTestCase(unittest.TestCase):
                 # TODO after tunnel creation a flow is set up
                 pass
 
-        self.loop.run_until_complete(f())
+        self.loop.run_until_complete(asyncio.wait_for(f(), timeout=3))
 
 
 # class RyuAppTestCase(unittest.TestCase):
