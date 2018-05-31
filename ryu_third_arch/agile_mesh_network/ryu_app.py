@@ -392,6 +392,7 @@ class SwitchApp(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.mac_to_port = {}
+        self.register_observer(EventActiveTunnelsList, self.name)
         self._ryu_ev_loop_scheduler = RyuAppEventLoopScheduler(self)
         self.manager = AgileMeshNetworkManagerThread(
             ryu_ev_loop_scheduler=self._ryu_ev_loop_scheduler
