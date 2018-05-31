@@ -136,6 +136,8 @@ class ManagerTestCase(unittest.TestCase):
             async with AgileMeshNetworkManager(
                 ryu_ev_loop_scheduler=self.ryu_ev_loop_scheduler
             ) as manager:
+                manager.start_initialization()
+
                 topology_database = manager.topology_database
                 local_database = topology_database.local
                 await local_database.is_filled_event.wait()
@@ -203,6 +205,7 @@ class ManagerTestCase(unittest.TestCase):
                 async with AgileMeshNetworkManager(
                     ryu_ev_loop_scheduler=self.ryu_ev_loop_scheduler
                 ) as manager:
+                    manager.start_initialization()
                     neg = manager.negotiator_rpc
                     await manager._initialization_task
 
@@ -233,6 +236,7 @@ class ManagerTestCase(unittest.TestCase):
             async with AgileMeshNetworkManager(
                 ryu_ev_loop_scheduler=self.ryu_ev_loop_scheduler
             ) as manager:
+                manager.start_initialization()
                 # TODO missing flows from RPC sync are added
                 # TODO after packet in a tunnel creation request is sent
                 # TODO after tunnel creation a flow is set up

@@ -294,7 +294,7 @@ class OpenvpnProcessProtocol(asyncio.SubprocessProtocol):
         self.transport = None
         self.pipe_context = pipe_context
         self.fut_exit: Awaitable[None] = asyncio.Future()
-        self.stdout_data = b''  # stderr is piped to stdout
+        self.stdout_data = b""  # stderr is piped to stdout
 
     def connection_made(self, transport):
         self.transport = transport
@@ -310,4 +310,6 @@ class OpenvpnProcessProtocol(asyncio.SubprocessProtocol):
 
     def log_failure(self):
         if self.transport.get_returncode() != 0:
-            logger.error('Openvpn process failed. Output: %s', self.stdout_data.decode())
+            logger.error(
+                "Openvpn process failed. Output: %s", self.stdout_data.decode()
+            )

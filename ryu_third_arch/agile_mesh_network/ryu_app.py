@@ -5,14 +5,15 @@ from contextlib import ExitStack
 from logging import getLogger
 from typing import Sequence
 
-import ryu.lib.ovs.vsctl as ovs_vsctl
 from async_exit_stack import AsyncExitStack
 from ryu import cfg
+from ryu.app.ofctl import api as ofctl_api
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.event import EventBase
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
 from ryu.lib.ovs import bridge as ovs_bridge
+from ryu.lib.ovs import vsctl as ovs_vsctl
 from ryu.lib.packet import ether_types, ethernet, packet
 from ryu.ofproto import ofproto_v1_4
 
@@ -20,7 +21,8 @@ from agile_mesh_network import settings
 from agile_mesh_network.common.models import (
     LayersDescriptionRpcModel, SwitchEntity, TunnelModel
 )
-from agile_mesh_network.common.rpc import RpcUnixClient, RpcBroadcast
+from agile_mesh_network.common.rpc import RpcBroadcast, RpcUnixClient
+from agile_mesh_network.common.tun_mapper import mac_to_tun_name
 from agile_mesh_network.ryu.events_scheduler import RyuAppEventLoopScheduler
 from agile_mesh_network.ryu.topology_database import TopologyDatabase
 
@@ -81,7 +83,7 @@ class NegotiatorRpc:
         return [TunnelModel.from_dict(d) for d in msg["tunnels"]]
 
     async def _rpc_command_handler(self, session, cmd: RpcBroadcast):
-        assert cmd.name == 'tunnel_created'
+        assert cmd.name == "tunnel_created"
         msg = cmd.kwargs
         assert msg.keys() == {"tunnel", "tunnels"}
         self._call_callbacks(topic=cmd.name, msg=msg)
@@ -119,58 +121,67 @@ class AgileMeshNetworkManager:
         )
 
     async def __aenter__(self):
-        assert self._initialization_task is None
         try:
             self._stack.enter_context(self.ovs_manager)
             await self._stack.enter_async_context(self.topology_database)
             await self._stack.enter_async_context(self.negotiator_rpc)
-            self._initialization_task = asyncio.ensure_future(self._initialization())
         except:
             await self._stack.aclose()
             raise
         return self
 
+    def start_initialization(self):
+        assert self._initialization_task is None
+        self._initialization_task = asyncio.ensure_future(self._initialization())
+
     async def __aexit__(self, exc_type, exc_value, exc_tb):
-        self._initialization_task.cancel()
+        if self._initialization_task:
+            self._initialization_task.cancel()
         await self._stack.aclose()
 
     async def _initialization(self):
-        logger.info("Initial sync: waiting for Local DB to initialize")
+        logger.info("Initial sync: waiting for Local DB to initialize...")
         await self.topology_database.local.is_filled_event.wait()
-        logger.info("Initial sync: retrieving tunnels from negotiator")
+        logger.info("Initial sync: waiting for Local DB to initialize: done.")
+        logger.info("Initial sync: retrieving tunnels from negotiator...")
         tunnels = None
         while True:
             try:
                 tunnels = await self.negotiator_rpc.list_tunnels()
-                break
-            except CancelledError:
-                return
-            except:
-                logger.error("Negotiator initial sync failed", exc_info=True)
-                await asyncio.sleep(5)
-        while True:
-            relay_switch = None
-            try:
-                if self._is_relay_connected(tunnels):
-                    logger.info('Negotiator initial sync: relay is already connected')
-                else:
-                    # TODO support multiple switches?
-                    relay_switch, = self.topology_database.find_random_relay_switches(1)
-                    logger.info('Negotiator initial sync: connecting to %s', relay_switch)
-                    await self.connect_switch(relay_switch)
+                logger.info("Initial sync: retrieving tunnels from negotiator: done.")
                 break
             except CancelledError:
                 return
             except:
                 logger.error(
-                    "Failed to connect to relay switch %s", relay_switch, exc_info=True
+                    "Initial sync: failed to retrieve tunnels from Negotiator.",
+                    exc_info=True,
                 )
                 await asyncio.sleep(5)
-        logger.info("Initial sync: complete")
-        # TODO init remote connection
+        while True:
+            relay_switch = None
+            try:
+                if self._is_relay_connected(tunnels):
+                    logger.info("Initial sync: no need to connect to a relay.")
+                else:
+                    # TODO support multiple switches?
+                    relay_switch, = self.topology_database.find_random_relay_switches(1)
+                    logger.info("Initial sync: connecting to %s...", relay_switch)
+                    await self.connect_switch(relay_switch)
+                    logger.info("Initial sync: connecting to %s: done.", relay_switch)
+                break
+            except CancelledError:
+                return
+            except:
+                logger.error(
+                    "Initial sync: failed to connect to relay switch %s.",
+                    relay_switch,
+                    exc_info=True,
+                )
+                await asyncio.sleep(5)
+        logger.info("Initial sync: complete!")
 
-    # These methods are called from other threads, so they must be
-    # fast, thread-safe and don't throw any exceptions.
+    # These methods must be fast and not throw any exceptions.
     def _event_db_synced(self):
         pass  # TODO
 
@@ -253,8 +264,16 @@ class AgileMeshNetworkManagerThread:
         self._manager = None
         self._thread = None
         self._thread_started_event = threading.Event()
+        self._start_initialization_event = threading.Event()
         self._loop = None
         self._amn_kwargs = amn_kwargs
+
+    @property
+    def ovs_manager(self):
+        return self._manager.ovs_manager
+
+    def start_initialization(self):
+        self._start_initialization_event.set()
 
     def __enter__(self):
         assert self._thread is None
@@ -288,6 +307,8 @@ class AgileMeshNetworkManagerThread:
         try:
             self._manager = loop.run_until_complete(enter_stack(stack))
             self._thread_started_event.set()
+            self._start_initialization_event.wait()
+            self._manager.start_initialization()
             loop.run_forever()
         except Exception as e:
             logger.error("Uncaught exception in the AMN event loop", exc_info=True)
@@ -312,6 +333,7 @@ class OVSManager:
 
     def __init__(self, datapath_id, CONF=RyuConfMock):
         ovsdb_addr = "tcp:%s:%d" % ("127.0.0.1", OVSDB_PORT)
+        self.datapath_id = datapath_id
         self.ovs = ovs_bridge.OVSBridge(
             CONF=CONF, datapath_id=datapath_id, ovsdb_addr=ovsdb_addr
         )
@@ -361,6 +383,9 @@ class OVSManager:
             for port in down_ports:
                 self._del_port(port)
             return down_ports
+
+    def get_ofport(self, port_name):
+        return self.ovs.get_ofport(port_name)
 
     def _is_port_up(self, port_name):
         if self.ovs.get_ofport(port_name) < 0:
@@ -412,6 +437,9 @@ class SwitchApp(app_manager.RyuApp):
         self._stack.close()
         super().stop()
 
+    def _get_datapath(self):
+        return ofctl_api.get_datapath(self, settings.OVS_DATAPATH_ID)
+
     @set_ev_cls(EventActiveTunnelsList)
     def active_tunnels_list_handler(self, ev):
         print(ev.tunnels)  # TODO
@@ -434,6 +462,7 @@ class SwitchApp(app_manager.RyuApp):
             parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)
         ]
         self.add_flow(datapath, 0, match, actions)
+        self.manager.start_initialization()
 
         # TODO add ovpn tap to the bridge
         # TODO add flow via tap
