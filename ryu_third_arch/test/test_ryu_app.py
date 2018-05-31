@@ -3,14 +3,13 @@ import os
 import tempfile
 import unittest
 from contextlib import ExitStack
-from time import sleep
 from unittest.mock import patch
 
 from async_exit_stack import AsyncExitStack
 from mockupdb import Command, MockupDB
 
 from agile_mesh_network import settings
-from agile_mesh_network.common.models import SwitchEntity
+from agile_mesh_network.common.models import SwitchEntity, TunnelModel
 from agile_mesh_network.common.rpc import RpcCommand, RpcUnixServer
 from agile_mesh_network.ryu import events_scheduler
 from agile_mesh_network.ryu_app import AgileMeshNetworkManager, SwitchApp
@@ -70,7 +69,9 @@ class ManagerTestCase(unittest.TestCase):
         self._stack.enter_context(
             patch.object(settings, "NEGOTIATOR_RPC_UNIX_SOCK_PATH", self.rpc_unix_sock)
         )
-        self._stack.enter_context(patch("agile_mesh_network.ryu_app.OVSManager"))
+        self._stack.enter_context(
+            patch("agile_mesh_network.ryu_app.OVSManager", DummyOVSManager)
+        )
 
         self._stack.enter_context(
             patch.object(events_scheduler, "RyuAppEventLoopScheduler")
@@ -158,17 +159,18 @@ class ManagerTestCase(unittest.TestCase):
                     ryu_ev_loop_scheduler=self.ryu_ev_loop_scheduler
                 ) as manager:
                     neg = manager.negotiator_rpc
-                    # await neg.list_tunnels()
-                    await manager._initial_sync_task
-                    # sleep(3)
-
-                    # TODO list command is sent on connection
+                    await manager._initialization_task
 
                     # TODO incoming tunnel events are respected in NV
                     # TODO relay tunnel connection is automatically sent
 
                     # TODO unknown tunnels after resync are dropped via RPC
-                    pass
+
+            args, kwargs = self.ryu_ev_loop_scheduler.send_event_to_observers.call_args
+            ev = args[0]
+            self.assertListEqual(
+                ev.tunnels, [TunnelModel.from_dict(SAMPLE_TUNNEL_DATA)]
+            )
 
         self.loop.run_until_complete(f())
 
@@ -197,3 +199,15 @@ class ManagerTestCase(unittest.TestCase):
 
 #     def test(self):
 #         pass
+
+
+class DummyOVSManager:
+
+    def __init__(self, *args, **kwargs):
+        self.bridge_mac = LOCAL_MAC
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass

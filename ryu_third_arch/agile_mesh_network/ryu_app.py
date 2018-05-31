@@ -3,6 +3,7 @@ import threading
 from concurrent.futures import CancelledError
 from contextlib import ExitStack
 from logging import getLogger
+from typing import Sequence
 
 import ryu.lib.ovs.vsctl as ovs_vsctl
 from async_exit_stack import AsyncExitStack
@@ -16,7 +17,7 @@ from ryu.lib.packet import ether_types, ethernet, packet
 from ryu.ofproto import ofproto_v1_4
 
 from agile_mesh_network import settings
-from agile_mesh_network.common.models import LayersDescriptionRpcModel
+from agile_mesh_network.common.models import LayersDescriptionRpcModel, TunnelModel
 from agile_mesh_network.common.rpc import RpcUnixClient
 from agile_mesh_network.ryu.events_scheduler import RyuAppEventLoopScheduler
 from agile_mesh_network.ryu.topology_database import TopologyDatabase
@@ -67,24 +68,29 @@ class NegotiatorRpc:
             },
         )
         assert msg.keys() == {"tunnel", "tunnels"}
-        for callback in self._tunnels_changed_callbacks:
-            callback(
-                topic="create_tunnel", tunnel=msg["tunnels"], tunnels=msg["tunnels"]
-            )
+        self._call_callbacks("create_tunnel", msg)
         # TODO return??
 
     async def list_tunnels(self):
         session = await self._get_session()
         msg = await session.issue_command("dump_tunnels_state")
         assert msg.keys() == {"tunnels"}
-        for callback in self._tunnels_changed_callbacks:
-            callback(topic="dump_tunnels_state", tunnel=None, tunnels=msg["tunnels"])
+        self._call_callbacks("dump_tunnels_state", msg)
         # TODO return??
 
     async def _rpc_command_handler(self, session, msg):
         assert msg.keys() == {"tunnels"}
+        self._call_callbacks(topic=None, msg=msg)
+
+    def _call_callbacks(self, topic, msg):
+        tunnel = TunnelModel.from_dict(msg["tunnel"]) if msg.get("tunnel") else None
+        tunnels = (
+            [TunnelModel.from_dict(d) for d in msg["tunnels"]]
+            if "tunnels" in msg
+            else None
+        )
         for callback in self._tunnels_changed_callbacks:
-            callback(topic=None, tunnel=None, tunnels=msg["tunnels"])
+            callback(topic=topic, tunnel=tunnel, tunnels=tunnels)
 
 
 class AgileMeshNetworkManager:
@@ -100,7 +106,7 @@ class AgileMeshNetworkManager:
         )
 
         self._stack = AsyncExitStack()
-        self._initial_sync_task = None
+        self._initialization_task = None
 
         self.topology_database.add_local_db_synced_callback(self._event_db_synced)
 
@@ -109,22 +115,25 @@ class AgileMeshNetworkManager:
         )
 
     async def __aenter__(self):
-        assert self._initial_sync_task is None
+        assert self._initialization_task is None
         try:
             self._stack.enter_context(self.ovs_manager)
             await self._stack.enter_async_context(self.topology_database)
             await self._stack.enter_async_context(self.negotiator_rpc)
-            self._initial_sync_task = asyncio.ensure_future(self._initial_sync())
+            self._initialization_task = asyncio.ensure_future(self._initialization())
         except:
             await self._stack.aclose()
             raise
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
-        self._initial_sync_task.cancel()
+        self._initialization_task.cancel()
         await self._stack.aclose()
 
-    async def _initial_sync(self):
+    async def _initialization(self):
+        logger.info("Initial sync: waiting for Local DB to initialize")
+        await self.topology_database.local.is_filled_event.wait()
+        logger.info("Initial sync: retrieving tunnels from negotiator")
         while True:
             try:
                 await self.negotiator_rpc.list_tunnels()
@@ -134,15 +143,58 @@ class AgileMeshNetworkManager:
             except:
                 logger.error("Negotiator initial sync failed", exc_info=True)
                 await asyncio.sleep(5)
+            else:
+                logger.info("Initial sync: complete")
+        # TODO init remote connection
 
     # These methods are called from other threads, so they must be
     # fast, thread-safe and don't throw any exceptions.
     def _event_db_synced(self):
         pass  # TODO
 
-    def _event_negotiator_tunnels_update(self, topic, tunnel, tunnels):
-        print(tunnels)
-        pass  # TODO
+    def _event_negotiator_tunnels_update(
+        self, topic: str, tunnel: TunnelModel, tunnels: Sequence[TunnelModel]
+    ) -> None:
+        # Note that for the tunnel_created response this would be
+        # called twice in a row.
+        if not self.topology_database.local.is_filled:
+            logger.error(
+                "Skipping negotiator event, because Local DB is not initialized yet"
+            )
+            return
+
+        logger.debug("Processing a list of tunnels from Negotiator: %s", tunnels)
+
+        for t in tunnels:
+            assert t.src_mac == self.ovs_manager.bridge_mac, (
+                f"Negotiator accepted a tunnel which src MAC {t.src_mac} doesn't "
+                f"match OVS bridge's {self.ovs_manager.bridge_mac} one."
+            )
+
+        existing_switches = self.topology_database.find_switches_by_mac_list(
+            [t.dst_mac for t in tunnels]
+        )
+
+        mac_to_tunnel = {t.dst_mac: t for t in tunnels}
+        mac_to_switch = {s.mac: s for s in existing_switches}
+
+        valid_tunnels = [
+            mac_to_tunnel[mac] for mac in mac_to_tunnel.keys() & mac_to_switch.keys()
+        ]
+        invalid_tunnels = [
+            mac_to_tunnel[mac] for mac in mac_to_tunnel.keys() - mac_to_switch.keys()
+        ]
+        logger.debug(
+            "Negotiator tunnels processed. Valid: %s. Invalid: %s",
+            valid_tunnels,
+            invalid_tunnels,
+        )
+
+        # TODO for invalid_tunnels - send tunnel_stop command to negotiator
+
+        self.ryu_ev_loop_scheduler.send_event_to_observers(
+            EventActiveTunnelsList(valid_tunnels)
+        )
 
     def _event_flow_packet_in(self):
         pass  # TODO
@@ -217,6 +269,7 @@ class OVSManager:
             CONF=CONF, datapath_id=datapath_id, ovsdb_addr=ovsdb_addr
         )
         self._lock = threading.Lock()
+        self._bridge_mac = None
 
     def __enter__(self):
         self.ovs.init()
@@ -224,6 +277,17 @@ class OVSManager:
 
     def __exit__(self, exc_type, exc_value, exc_tb):
         pass
+
+    @property
+    def bridge_mac(self):
+        if not self._bridge_mac:
+            with self._lock:
+                mac_in_use = self.ovs.db_get_val(
+                    "Interface", self.ovs.br_name, "mac_in_use"
+                )
+            assert len(mac_in_use) == 1
+            self._bridge_mac = mac_in_use[0]
+        return self._bridge_mac
 
     def is_port_up(self, port_name):
         with self._lock:
@@ -269,6 +333,12 @@ class OVSManager:
         self.ovs.run_command([command])
 
 
+class EventActiveTunnelsList(EventBase):
+
+    def __init__(self, tunnels: Sequence[TunnelModel]):
+        self.tunnels = tunnels
+
+
 class SwitchApp(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_4.OFP_VERSION]
 
@@ -293,6 +363,10 @@ class SwitchApp(app_manager.RyuApp):
     def stop(self):
         self._stack.close()
         super().stop()
+
+    @set_ev_cls(EventActiveTunnelsList)
+    def active_tunnels_list_handler(self, ev):
+        print(ev.tunnels)  # TODO
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):

@@ -14,51 +14,11 @@ def random_string():
 LayersList = Sequence[str]
 
 
-@dataclass
-class TunnelModel:
-    src_mac: str
-    dst_mac: str
-    layers: LayersList
-    is_dead: bool
-    is_tunnel_active: bool
-
+class AsDictMixin:
     asdict = asdict
 
 
-@dataclass
-class LayersDescriptionModel:
-    protocol: str
-    layers: Mapping[str, Any]
-
-    asdict = asdict
-
-
-@dataclass
-class LayersDescriptionRpcModel(LayersDescriptionModel):
-    dest: Any
-
-    asdict = asdict
-
-
-@dataclass
-class NegotiationIntentionModel:
-    src_mac: str
-    dst_mac: str
-    layers: Mapping[str, Any]
-
-    # Prevent replay attack for the 'ack' response.
-    nonce: str = field(default_factory=random_string)
-
-    asdict = asdict
-
-
-@dataclass
-class SwitchEntity:
-    hostname: str
-    is_relay: bool
-    mac: str
-    layers_config: Any  # TODO model.
-    # TODO allow switches to dynamically set their own IP addresses.
+class FromDictMixin:
 
     @classmethod
     def from_dict(cls, kwargs):
@@ -68,3 +28,42 @@ class SwitchEntity:
         for key in extra:
             kwargs.pop(key)
         return cls(**kwargs)
+
+
+@dataclass
+class TunnelModel(AsDictMixin, FromDictMixin):
+    src_mac: str
+    dst_mac: str
+    layers: LayersList
+    is_dead: bool
+    is_tunnel_active: bool
+
+
+@dataclass
+class LayersDescriptionModel(AsDictMixin):
+    protocol: str
+    layers: Mapping[str, Any]
+
+
+@dataclass
+class LayersDescriptionRpcModel(LayersDescriptionModel, AsDictMixin):
+    dest: Any
+
+
+@dataclass
+class NegotiationIntentionModel(AsDictMixin):
+    src_mac: str
+    dst_mac: str
+    layers: Mapping[str, Any]
+
+    # Prevent replay attack for the 'ack' response.
+    nonce: str = field(default_factory=random_string)
+
+
+@dataclass
+class SwitchEntity(FromDictMixin):
+    hostname: str
+    is_relay: bool
+    mac: str
+    layers_config: Any  # TODO model.
+    # TODO allow switches to dynamically set their own IP addresses.
