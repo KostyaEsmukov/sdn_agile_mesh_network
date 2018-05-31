@@ -159,7 +159,7 @@ class ManagerTestCase(unittest.TestCase):
                 ) as manager:
                     neg = manager.negotiator_rpc
                     # await neg.list_tunnels()
-                    await neg._initial_sync_task
+                    await manager._initial_sync_task
                     # sleep(3)
 
                     # TODO list command is sent on connection

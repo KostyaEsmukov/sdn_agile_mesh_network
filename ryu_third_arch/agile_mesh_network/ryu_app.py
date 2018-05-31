@@ -28,47 +28,6 @@ logger = getLogger("amn_ryu_app")
 OVSDB_PORT = 6640  # The IANA registered port for OVSDB [RFC7047]
 
 
-class NetworkView:
-    """Syncs the state between Negotiator, Topology Database and OVS.
-
-    Must be thread-safe.
-    """
-
-    # TODO deal with L2 loops
-    def __init__(
-        self,
-        topology_database: TopologyDatabase,
-        negotiator_rpc: "NegotiatorRpc",
-        ovs_manager: "OVSManager",
-        ryu_ev_loop_scheduler: "RyuAppEventLoopScheduler",
-    ) -> None:
-        self.topology_database = topology_database
-        topology_database.add_local_db_synced_callback(self._event_db_synced)
-
-        self.negotiator_rpc = negotiator_rpc
-        negotiator_rpc.add_tunnels_changed_callback(
-            self._event_negotiator_tunnels_update
-        )
-
-        self.ovs_manager = ovs_manager
-        self.ryu_ev_loop_scheduler = ryu_ev_loop_scheduler
-
-        # TODO state: ovsdb tunnels list
-        # TODO state: negotiator tunnels list
-
-    # These methods are called from other threads, so they must be
-    # fast, thread-safe and don't throw any exceptions.
-    def _event_db_synced(self):
-        pass  # TODO
-
-    def _event_negotiator_tunnels_update(self, topic, tunnel, tunnels):
-        print(tunnels)
-        pass  # TODO
-
-    def _event_flow_packet_in(self):
-        pass  # TODO
-
-
 class NegotiatorRpc:
 
     def __init__(self, unix_sock_path):
@@ -76,7 +35,12 @@ class NegotiatorRpc:
         self._tunnels_changed_callbacks = []
         self._stack = AsyncExitStack()
         self._rpc = None
-        self._initial_sync_task = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self._stack.aclose()
 
     def add_tunnels_changed_callback(self, callback):
         self._tunnels_changed_callbacks.append(callback)
@@ -88,26 +52,6 @@ class NegotiatorRpc:
             )
             # TODO recover on connection loss?
         return self._rpc.session
-
-    async def __aenter__(self):
-        assert self._initial_sync_task is None
-        self._initial_sync_task = asyncio.ensure_future(self._initial_sync())
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self._initial_sync_task.cancel()
-        await self._stack.aclose()
-
-    async def _initial_sync(self):
-        while True:
-            try:
-                await self.list_tunnels()
-                break
-            except CancelledError:
-                break
-            except:
-                logger.error("Negotiator initial sync failed", exc_info=True)
-                await asyncio.sleep(5)
 
     async def start_tunnel(
         self, src_mac, dst_mac, timeout, layers: LayersDescriptionRpcModel
@@ -144,6 +88,7 @@ class NegotiatorRpc:
 
 
 class AgileMeshNetworkManager:
+    # TODO deal with L2 loops
 
     def __init__(self, *, ryu_ev_loop_scheduler):
         self.ryu_ev_loop_scheduler = ryu_ev_loop_scheduler
@@ -153,26 +98,54 @@ class AgileMeshNetworkManager:
             datapath_id=settings.OVS_DATAPATH_ID,
             # TODO ryu_app.CONF?
         )
-        self.network_view = NetworkView(
-            self.topology_database,
-            self.negotiator_rpc,
-            self.ovs_manager,
-            self.ryu_ev_loop_scheduler,
-        )
+
         self._stack = AsyncExitStack()
+        self._initial_sync_task = None
+
+        self.topology_database.add_local_db_synced_callback(self._event_db_synced)
+
+        self.negotiator_rpc.add_tunnels_changed_callback(
+            self._event_negotiator_tunnels_update
+        )
 
     async def __aenter__(self):
+        assert self._initial_sync_task is None
         try:
             self._stack.enter_context(self.ovs_manager)
             await self._stack.enter_async_context(self.topology_database)
             await self._stack.enter_async_context(self.negotiator_rpc)
+            self._initial_sync_task = asyncio.ensure_future(self._initial_sync())
         except:
             await self._stack.aclose()
             raise
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
+        self._initial_sync_task.cancel()
         await self._stack.aclose()
+
+    async def _initial_sync(self):
+        while True:
+            try:
+                await self.negotiator_rpc.list_tunnels()
+                break
+            except CancelledError:
+                break
+            except:
+                logger.error("Negotiator initial sync failed", exc_info=True)
+                await asyncio.sleep(5)
+
+    # These methods are called from other threads, so they must be
+    # fast, thread-safe and don't throw any exceptions.
+    def _event_db_synced(self):
+        pass  # TODO
+
+    def _event_negotiator_tunnels_update(self, topic, tunnel, tunnels):
+        print(tunnels)
+        pass  # TODO
+
+    def _event_flow_packet_in(self):
+        pass  # TODO
 
 
 class AgileMeshNetworkManagerThread:
@@ -194,7 +167,6 @@ class AgileMeshNetworkManagerThread:
     def __exit__(self, exc_type, exc_value, exc_tb):
         if self._thread is not None and self._thread.is_alive():
             assert self._loop
-            # self._thread_interrupted = True
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join()
         self._manager = None
