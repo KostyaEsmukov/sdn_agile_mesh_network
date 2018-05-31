@@ -167,7 +167,15 @@ Should be run on each Switch (+ Relays).
 
 ## Switch usage
 
-    # TODO ENV
-    ryu-manager --verbose /opt/amn/venv/lib/python3.6/site-packages/agile_mesh_network/ryu_app.py
+    ovs-vsctl set-manager ptcp:6640
+
+    # DATAPATH_ID is the local OVS bridge's MAC address
+    cat << EOF > /opt/amn/ryu-env
+    AMN_REMOTE_DATABASE_MONGO_URI=mongodb://192.168.56.10:27017/
+    AMN_OVS_DATAPATH_ID="021122333302"
+    AMN_IS_RELAY=False
+    EOF
+
+    export $(cat /opt/amn/ryu-env | xargs) && ryu-manager --verbose /opt/amn/venv/lib/python3.6/site-packages/agile_mesh_network/ryu_app.py
 
 

@@ -20,7 +20,7 @@ from agile_mesh_network import settings
 from agile_mesh_network.common.models import (
     LayersDescriptionRpcModel, SwitchEntity, TunnelModel
 )
-from agile_mesh_network.common.rpc import RpcUnixClient
+from agile_mesh_network.common.rpc import RpcUnixClient, RpcBroadcast
 from agile_mesh_network.ryu.events_scheduler import RyuAppEventLoopScheduler
 from agile_mesh_network.ryu.topology_database import TopologyDatabase
 
@@ -80,9 +80,11 @@ class NegotiatorRpc:
         self._call_callbacks("dump_tunnels_state", msg)
         return [TunnelModel.from_dict(d) for d in msg["tunnels"]]
 
-    async def _rpc_command_handler(self, session, msg):
-        assert msg.keys() == {"tunnels"}
-        self._call_callbacks(topic=None, msg=msg)
+    async def _rpc_command_handler(self, session, cmd: RpcBroadcast):
+        assert cmd.name == 'tunnel_created'
+        msg = cmd.kwargs
+        assert msg.keys() == {"tunnel", "tunnels"}
+        self._call_callbacks(topic=cmd.name, msg=msg)
 
     def _call_callbacks(self, topic, msg):
         tunnel = TunnelModel.from_dict(msg["tunnel"]) if msg.get("tunnel") else None
@@ -142,7 +144,7 @@ class AgileMeshNetworkManager:
                 tunnels = await self.negotiator_rpc.list_tunnels()
                 break
             except CancelledError:
-                break
+                return
             except:
                 logger.error("Negotiator initial sync failed", exc_info=True)
                 await asyncio.sleep(5)
@@ -158,7 +160,7 @@ class AgileMeshNetworkManager:
                     await self.connect_switch(relay_switch)
                 break
             except CancelledError:
-                break
+                return
             except:
                 logger.error(
                     "Failed to connect to relay switch %s", relay_switch, exc_info=True
@@ -380,7 +382,7 @@ class OVSManager:
 
 class EventActiveTunnelsList(EventBase):
 
-    def __init__(self, tunnels: Sequence[TunnelModel]):
+    def __init__(self, tunnels: Sequence[TunnelModel]) -> None:
         self.tunnels = tunnels
 
 
