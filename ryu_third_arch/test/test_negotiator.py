@@ -35,9 +35,11 @@ class IntegrationTestCase(TestCase):
 
         self.openvpn_stdout = openvpn_stdout = defaultdict(lambda: b"")
 
+        original_pipe_data_received = OpenvpnProcessProtocol.pipe_data_received
+
         def openvpn_pipe_data_received(self, fd, data):
             openvpn_stdout[self.transport] += data
-            # TODO call the parent data_received too?
+            original_pipe_data_received(self, fd, data)
 
         self._stack = ExitStack()
         self.temp_dir = self._stack.enter_context(tempfile.TemporaryDirectory())

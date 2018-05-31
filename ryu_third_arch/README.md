@@ -119,10 +119,10 @@ install it from there.
 
     cat << EOF > /etc/openvpn/server.conf
     server-bridge
-    key openvpn-easy-rsa/keys/server.key
-    ca openvpn-easy-rsa/keys/ca.crt
-    cert openvpn-easy-rsa/keys/server.crt
-    dh openvpn-easy-rsa/keys/dh2048.pem
+    key keys/server.key
+    ca keys/ca.crt
+    cert keys/server.crt
+    dh keys/dh2048.pem
     keepalive 10 60
     max-clients 2
     user nobody
@@ -135,10 +135,10 @@ install it from there.
     client
     nobind
     remote-cert-tls server
-    key openvpn-easy-rsa/keys/client.key
-    ca openvpn-easy-rsa/keys/ca.crt
-    cert openvpn-easy-rsa/keys/client.crt
-    dh openvpn-easy-rsa/keys/dh2048.pem
+    key keys/client.key
+    ca keys/ca.crt
+    cert keys/client.crt
+    dh keys/dh2048.pem
     user nobody
     group nogroup
     comp-lzo no

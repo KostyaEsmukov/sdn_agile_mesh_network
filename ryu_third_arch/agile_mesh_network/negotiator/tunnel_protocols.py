@@ -52,6 +52,8 @@ class PipeContext:
         self._close_callbacks.append(callback)
 
     def close(self):
+        if self.is_closed:
+            return
         logger.info("Closing pipe context")
         # TODO close process first, wait until it's terminated,
         # then close sockets.

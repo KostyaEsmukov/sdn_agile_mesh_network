@@ -4,6 +4,7 @@ import socket
 import subprocess
 from abc import ABCMeta, abstractmethod
 from contextlib import closing
+from logging import getLogger
 from typing import Awaitable
 
 import psutil
@@ -14,6 +15,8 @@ from agile_mesh_network.common.async_utils import (
 from agile_mesh_network.common.models import LayersDescriptionModel
 from agile_mesh_network.common.tun_mapper import mac_to_tun_name
 from agile_mesh_network.negotiator.tunnel_protocols import PipeContext
+
+logger = getLogger(__name__)
 
 
 class ProcessManager(metaclass=ABCMeta):
@@ -117,6 +120,7 @@ class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
         return openvpn_config.exe_path
 
     async def _start_openvpn_process(self, args):
+        logger.info("Starting openvpn process: %s %r", self._exec_path, args)
         loop = asyncio.get_event_loop()
         self._process_transport, _ = await loop.subprocess_exec(
             lambda: OpenvpnProcessProtocol(self._pipe_context),
@@ -157,7 +161,7 @@ class OpenvpnResponderProcessManager(BaseOpenvpnProcessManager):
 
     def _build_process_args(self):
         cd = os.path.dirname(openvpn_config.server_config_path)
-        return tuple(
+        return (
             "--mode",
             "server",
             "--proto",
@@ -188,9 +192,7 @@ class OpenvpnInitiatorProcessManager(BaseOpenvpnProcessManager):
 
     def _build_process_args(self):
         cd = os.path.dirname(openvpn_config.client_config_path)
-        return tuple(
-            "--mode",
-            "client",
+        return (
             "--proto",
             "tcp-client",
             "--remote",
@@ -292,14 +294,20 @@ class OpenvpnProcessProtocol(asyncio.SubprocessProtocol):
         self.transport = None
         self.pipe_context = pipe_context
         self.fut_exit: Awaitable[None] = asyncio.Future()
+        self.stdout_data = b''  # stderr is piped to stdout
 
     def connection_made(self, transport):
         self.transport = transport
         self.pipe_context.add_closing(transport)
+        self.pipe_context.add_close_callback(self.log_failure)
 
     def pipe_data_received(self, fd, data):
-        pass
+        self.stdout_data += data
 
     def process_exited(self):
         self.fut_exit.set_result(None)
         self.pipe_context.close()
+
+    def log_failure(self):
+        if self.transport.get_returncode() != 0:
+            logger.error('Openvpn process failed. Output: %s', self.stdout_data.decode())
