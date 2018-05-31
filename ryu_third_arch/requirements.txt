@@ -2,5 +2,6 @@ async-exit-stack
 click
 cryptography
 dataclasses
+psutil
 pymongo
 ryu

@@ -6,6 +6,8 @@ from abc import ABCMeta, abstractmethod
 from contextlib import closing
 from typing import Awaitable
 
+import psutil
+
 from agile_mesh_network.common.async_utils import (
     future_set_exception_silent, future_set_result_silent
 )
@@ -146,7 +148,9 @@ class OpenvpnResponderProcessManager(BaseOpenvpnProcessManager):
     async def start(self, timeout=None):
         self._local_port = get_free_local_tcp_port()
         await self._start_openvpn_process(self._build_process_args())
-        await asyncio.sleep(1)  # TODO !!!!!!! MAKE THIS RIGHT
+        await wait_localport_is_bound(
+            self._process_transport.get_pid(), self._local_port, proto="tcp"
+        )
         self.interior_protocol = await create_local_tcp_client(
             self._pipe_context, self._local_port
         )
@@ -207,6 +211,24 @@ def get_free_local_tcp_port():
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("localhost", 0))
         return s.getsockname()[1]
+
+
+async def wait_localport_is_bound(pid, port_number, proto="tcp", pool_interval=0.3):
+    # throws psutil.NoSuchProcess
+    assert proto in ("tcp",)
+    socket_type = socket.SOCK_STREAM  # tcp
+    proc = psutil.Process(pid)
+    while True:
+        bound = [
+            pconn
+            for pconn in proc.connections()
+            if pconn.status == "LISTEN"
+            and pconn.type == socket_type
+            and pconn.laddr.port == port_number
+        ]
+        if bound:
+            break
+        await asyncio.sleep(pool_interval)
 
 
 async def create_local_tcp_client(pipe_context, local_dest_tcp_port, *, loop=None):
