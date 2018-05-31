@@ -117,6 +117,12 @@ install it from there.
     cd /etc/openvpn
     tar xaf openvpn-easy-rsa.tar.gz
 
+    cat << 'EOF' > /etc/openvpn/ifup.up
+    #!/bin/sh
+    /sbin/ip link set "$1" up
+    EOF
+    chmod +x /etc/openvpn/ifup.up
+
     cat << EOF > /etc/openvpn/server.conf
     server-bridge
     key keys/server.key
@@ -129,6 +135,8 @@ install it from there.
     group nogroup
     comp-lzo no
     duplicate-cn
+    script-security 2
+    up "/etc/openvpn/ifup.up"
     EOF
 
     cat << EOF > /etc/openvpn/client.conf
@@ -142,6 +150,8 @@ install it from there.
     user nobody
     group nogroup
     comp-lzo no
+    script-security 2
+    up "/etc/openvpn/ifup.up"
     EOF
 
 ### Negotiator systemd service
