@@ -67,7 +67,7 @@ class IntegrationTestCase(TestCase):
 
         async def f():
             async with AsyncExitStack() as stack:
-                tunnels_state = await stack.enter_async_context(TunnelsState())
+                tunnels_state = await stack.enter_async_context(TunnelsState(loop=loop))
                 await stack.enter_async_context(
                     RpcResponder(tunnels_state, rpc_sock_path)
                 )
@@ -76,12 +76,10 @@ class IntegrationTestCase(TestCase):
                 )
 
                 rpc = rpc_c.session
-                resp = await asyncio.wait_for(
-                    rpc.issue_command("dump_tunnels_state"), timeout=3
-                )
+                resp = await rpc.issue_command("dump_tunnels_state")
                 self.assertDictEqual(resp, {"tunnels": []})
 
-        loop.run_until_complete(f())
+        loop.run_until_complete(asyncio.wait_for(f(), timeout=3))
 
     @patch.object(BaseOpenvpnProcessManager, "_exec_path", RUN_TCP_PATH)
     @patch.object(
@@ -125,8 +123,12 @@ class IntegrationTestCase(TestCase):
 
         async def f():
             async with AsyncExitStack() as stack:
-                tunnels_state_a = await stack.enter_async_context(TunnelsState())
-                tunnels_state_b = await stack.enter_async_context(TunnelsState())
+                tunnels_state_a = await stack.enter_async_context(
+                    TunnelsState(loop=loop)
+                )
+                tunnels_state_b = await stack.enter_async_context(
+                    TunnelsState(loop=loop)
+                )
                 await stack.enter_async_context(
                     RpcResponder(tunnels_state_a, os.path.join(self.temp_dir, "a.sock"))
                 )
@@ -187,14 +189,16 @@ class IntegrationTestCase(TestCase):
                     "layers": ["openvpn"],
                 }
 
+                # Give the event loop opportunity to process
+                # the tunnel creation command.
+                await asyncio.sleep(0)
+
                 # Issue another command while the tunnel creation is in progress
-                tunnels = await asyncio.wait_for(
-                    rpc_a.issue_command("dump_tunnels_state"), timeout=0.5
-                )
+                tunnels = await rpc_a.issue_command("dump_tunnels_state")
                 self.assertDictEqual(tunnels, {"tunnels": [tunnel_data_a]})
 
                 # Wait until tunnel is created
-                resp = await asyncio.wait_for(create_tunnel_future, timeout=3)
+                resp = await create_tunnel_future
                 tunnel_data_a["is_tunnel_active"] = True
                 tunnel_data_b["is_tunnel_active"] = True
                 self.assertDictEqual(
@@ -202,9 +206,7 @@ class IntegrationTestCase(TestCase):
                 )
 
                 # Ensure that responder has the same view
-                tunnels = await asyncio.wait_for(
-                    rpc_b.issue_command("dump_tunnels_state"), timeout=0.5
-                )
+                tunnels = await rpc_b.issue_command("dump_tunnels_state")
                 self.assertDictEqual(tunnels, {"tunnels": [tunnel_data_b]})
 
                 # Check RPC broadcasts
@@ -232,6 +234,11 @@ class IntegrationTestCase(TestCase):
                         )
                     ],
                 )
+                rpc_commands_a.clear()
+                rpc_commands_b.clear()
+
+                # Give some time for the data to be completely transferred
+                await asyncio.sleep(0.1)
 
                 # Verify that the data was correctly piped
                 self.assertSetEqual(
@@ -239,4 +246,43 @@ class IntegrationTestCase(TestCase):
                     {RUN_TCP_CLIENT_DATA.encode(), RUN_TCP_SERVER_DATA.encode()},
                 )
 
-        loop.run_until_complete(f())
+                # Break the tunnel by terminating a process.
+                pm = next(iter(tunnels_state_a.tunnels.values())).process_manager
+                pm._process_transport.close()
+
+                # Let these poor fellows process what has happened.
+                await pm._pipe_context.closed_event.wait()
+                await asyncio.sleep(0.1)
+
+                # Check RPC broadcasts
+                tunnel_data_a["is_tunnel_active"] = False
+                tunnel_data_b["is_tunnel_active"] = False
+                tunnel_data_a["is_dead"] = True
+                tunnel_data_b["is_dead"] = True
+                self.assertListEqual(
+                    rpc_commands_a,
+                    [
+                        RpcBroadcast(
+                            name="tunnel_destroyed",
+                            kwargs={"tunnel": tunnel_data_a, "tunnels": []},
+                        )
+                    ],
+                )
+                self.assertListEqual(
+                    rpc_commands_b,
+                    [
+                        RpcBroadcast(
+                            name="tunnel_destroyed",
+                            kwargs={"tunnel": tunnel_data_b, "tunnels": []},
+                        )
+                    ],
+                )
+
+                # Ensure that the tunnels state is now empty
+                tunnels = await rpc_a.issue_command("dump_tunnels_state")
+                self.assertDictEqual(tunnels, {"tunnels": []})
+
+                tunnels = await rpc_b.issue_command("dump_tunnels_state")
+                self.assertDictEqual(tunnels, {"tunnels": []})
+
+        loop.run_until_complete(asyncio.wait_for(f(), timeout=3))

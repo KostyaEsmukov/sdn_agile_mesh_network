@@ -22,6 +22,7 @@ class PipeContext:
         self._write_q = []
         self._close_callbacks = []
         self.is_closed = False
+        self.closed_event = asyncio.Event()
 
     def contribute_exterior_transport(self, exterior_transport):
         assert self.exterior_transport is None
@@ -64,6 +65,7 @@ class PipeContext:
         for callback in self._close_callbacks:
             callback()
         self._close_callbacks.clear()
+        self.closed_event.set()
 
     def __enter__(self):
         return self

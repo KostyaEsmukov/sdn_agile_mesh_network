@@ -22,8 +22,10 @@ logging.basicConfig(level=logging.INFO)
 class TunnelsState:
     """Local state (tunnels + mac addresses)."""
 
-    def __init__(self):
+    def __init__(self, *, loop):
+        self._loop = loop
         self.tunnel_created_callback = None
+        self.tunnel_destroyed_callback = None
         self.tunnels = {}
 
     async def __aenter__(self):
@@ -48,10 +50,27 @@ class TunnelsState:
         assert isinstance(self.tunnels[tunnel], TunnelIntention)
         self.tunnels[tunnel] = tunnel
 
+        tunnel.process_manager.add_dead_callback(
+            functools.partial(self._dead_tunnel_handler, tunnel)
+        )
+
         tunnel_model = tunnel.model()
         if self.tunnel_created_callback:
             await self.tunnel_created_callback(tunnel_model)
         return tunnel_model
+
+    def _dead_tunnel_handler(self, tunnel):
+        self.tunnels.pop(tunnel, None)
+
+        async def task(tunnel_model):
+            try:
+                await self.tunnel_destroyed_callback(tunnel_model)
+            except:
+                logging.error("Error while destroying a tunnel", exc_info=True)
+
+        if self.tunnel_destroyed_callback:
+            tunnel_model = tunnel.model()
+            asyncio.ensure_future(task(tunnel_model), loop=self._loop)
 
     async def create_tunnel(
         self, src_mac, dst_mac, timeout, layers: LayersDescriptionRpcModel
@@ -69,6 +88,10 @@ class TunnelsState:
         assert not self.tunnel_created_callback
         self.tunnel_created_callback = callback
 
+    def register_tunnel_destroyed_callback(self, callback):
+        assert not self.tunnel_destroyed_callback
+        self.tunnel_destroyed_callback = callback
+
     # TODO notify via RPC when a tunnel is destroyed
 
     async def close_tunnels_wait(self):
@@ -80,11 +103,14 @@ class TunnelsState:
         protocol, aw_pending_tunnel = PendingTunnel.tunnel_intention_for_responder()
 
         async def task():
-            with protocol.pipe_context:
-                pending_tunnel = await aw_pending_tunnel
-                await self._create_pending_tunnel(pending_tunnel)
+            try:
+                with protocol.pipe_context:
+                    pending_tunnel = await aw_pending_tunnel
+                    await self._create_pending_tunnel(pending_tunnel)
+            except:
+                logging.error("Error while creating a responder tunnel", exc_info=True)
 
-        asyncio.ensure_future(task())
+        asyncio.ensure_future(task(), loop=self._loop)
         return protocol
 
 
@@ -99,6 +125,7 @@ class RpcResponder:
         self.rpc_server = RpcUnixServer(self.socket_path, self._handle_command)
         self._tunnels_state = tunnels_state
         tunnels_state.register_tunnel_created_callback(self.notify_tunnel_created)
+        tunnels_state.register_tunnel_destroyed_callback(self.notify_tunnel_destroyed)
 
     def __str__(self):
         return f"RpcResponder server at {self.socket_path}"
@@ -149,12 +176,18 @@ class RpcResponder:
     # TODO stop_tunnel RPC command
 
     async def notify_tunnel_created(self, tunnel: TunnelModel):
+        await self._broadcast_tunnels("tunnel_created", tunnel)
+
+    async def notify_tunnel_destroyed(self, tunnel: TunnelModel):
+        await self._broadcast_tunnels("tunnel_destroyed", tunnel)
+
+    async def _broadcast_tunnels(self, topic_name, tunnel: TunnelModel):
         tunnels = self._tunnels_state.active_tunnels()
         tunnels = [m.asdict() for m in tunnels]
         for s in list(self.rpc_server.sessions):
             if not s.is_closed:
                 await s.issue_broadcast(
-                    "tunnel_created", {"tunnel": tunnel.asdict(), "tunnels": tunnels}
+                    topic_name, {"tunnel": tunnel.asdict(), "tunnels": tunnels}
                 )
 
 
@@ -215,8 +248,9 @@ class TcpExteriorServer:
 
 
 async def main_async_exit_stack(*, tcp_port, socket_path):
+    loop = asyncio.get_event_loop()
     stack = AsyncExitStack()
-    tunnels_state = await stack.enter_async_context(TunnelsState())
+    tunnels_state = await stack.enter_async_context(TunnelsState(loop=loop))
     await stack.enter_async_context(
         RpcResponder(tunnels_state, socket_path=socket_path)
     )

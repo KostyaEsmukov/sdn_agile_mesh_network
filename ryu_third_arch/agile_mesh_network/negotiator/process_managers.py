@@ -65,6 +65,11 @@ class ProcessManager(metaclass=ABCMeta):
         """
         pass
 
+    @abstractmethod
+    def add_dead_callback(self, callback):
+        """A handler which will be called when the tunnel dies."""
+        pass
+
 
 class OpenvpnConfig:
     exe_path = "openvpn"
@@ -142,6 +147,9 @@ class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
     @property
     def is_dead(self):
         return self._pipe_context.is_closed
+
+    def add_dead_callback(self, callback):
+        self._pipe_context.add_close_callback(callback)
 
     def close(self):
         self._pipe_context.close()
@@ -246,6 +254,7 @@ async def create_local_tcp_server(pipe_context, *, loop=None):
     loop = loop or asyncio.get_event_loop()
     protocol = InteriorProtocol(pipe_context)
     server = await loop.create_server(single_connection_factory(protocol), "127.0.0.1")
+    pipe_context.add_closing(server)  # Closes the listening server.
     assert 1 == len(server.sockets)
     _, port = server.sockets[0].getsockname()
     return protocol, port
