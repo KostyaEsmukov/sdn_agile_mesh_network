@@ -87,7 +87,11 @@ class NegotiatorRpc:
         return [TunnelModel.from_dict(d) for d in msg["tunnels"]]
 
     async def _rpc_command_handler(self, session, cmd: RpcBroadcast):
-        assert cmd.name == "tunnel_created"
+        if cmd.name not in ("tunnel_created", "tunnel_destroyed"):
+            logger.error(
+                "Ignoring RPC broadcast with an unknown topic_name: %s", cmd.name
+            )
+            return
         msg = cmd.kwargs
         assert msg.keys() == {"tunnel", "tunnels"}
         self._call_callbacks(topic=cmd.name, msg=msg)
@@ -221,9 +225,6 @@ class AgileMeshNetworkManager:
                 {mac: (mac_to_tunnel[mac], mac_to_switch[mac]) for mac in valid}
             )
         )
-
-    def _event_flow_packet_in(self):
-        pass  # TODO
 
     def _filter_tunnels(self, tunnels):
         for t in tunnels:
@@ -382,13 +383,8 @@ class OVSManager:
         with self._lock:
             self._del_port(port_name)
 
-    def del_all_down_ports(self):
-        with self._lock:
-            ports = set(self.ovs.get_port_name_list())
-            down_ports = [port for port in ports if not self._is_port_up(port)]
-            for port in down_ports:
-                self._del_port(port)
-            return down_ports
+    def get_ports_in_bridge(self) -> Sequence[str]:
+        return list(self.ovs.get_port_name_list())
 
     def get_ofport(self, port_name):
         return self.ovs.get_ofport(port_name)
@@ -401,7 +397,7 @@ class OVSManager:
             return -1
 
     def _is_port_up(self, port_name):
-        if self.ovs.get_ofport_ex(port_name) < 0:
+        if self.get_ofport_ex(port_name) < 0:
             # Interface is on the OVS DB, but is missing in the OS.
             return False
         link_state = self.ovs.db_get_val("Interface", port_name, "link_state")
@@ -435,11 +431,34 @@ class FlowsLogic:
         self, mac_to_tunswitch: Mapping[str, Tuple[TunnelModel, SwitchEntity]]
     ) -> None:
 
-        logger.warning("FlowsLogic: negotiator tunnels are: %s", mac_to_tunswitch)
-        for tunnel, _ in mac_to_tunswitch.values():
-            self.ovs_manager.add_port_to_bridge(mac_to_tun_name(tunnel.dst_mac))
-        # ovs_manager.del_all_down_ports()
-        # TODO remove from ovs all extraneous tuns (not just down ones).
+        logger.warning(
+            "FlowsLogic: negotiator tunnels are:\n%s\n%s\n%s",
+            "-" * 40,
+            "\n".join(
+                f"- {mac} {mac_to_tun_name(mac)} {swi.hostname}:\n|--{tun}\n|--{swi}"
+                for mac, (tun, swi) in sorted(mac_to_tunswitch.items())
+            ),
+            "-" * 40,
+        )
+
+        expected_tuns_in_bridge = [
+            mac_to_tun_name(tunnel.dst_mac) for tunnel, _ in mac_to_tunswitch.values()
+        ]
+
+        for tun in expected_tuns_in_bridge:
+            self.ovs_manager.add_port_to_bridge(tun)
+
+        current_tuns_set = set(self.ovs_manager.get_ports_in_bridge())
+        expected_tuns_set = set(expected_tuns_in_bridge)
+        extraneous_tuns_in_bridge = current_tuns_set - expected_tuns_set
+
+        if extraneous_tuns_in_bridge:
+            logger.debug(
+                "Removing extraneous ports from bridge: %s", extraneous_tuns_in_bridge
+            )
+
+        for tun in extraneous_tuns_in_bridge:
+            self.ovs_manager.del_port_from_bridge(tun)
         # TODO remove flows via relay
 
         relays = [
@@ -501,7 +520,8 @@ class FlowsLogic:
                 return
         assert out_port >= 0
         logger.info(
-            "PACKET_IN: decision: out_port %s", self._ofport_to_string(out_port, ofproto)
+            "PACKET_IN: decision: out_port %s",
+            self._ofport_to_string(out_port, ofproto),
         )
 
         # if dst in self.mac_to_port[dpid]:
