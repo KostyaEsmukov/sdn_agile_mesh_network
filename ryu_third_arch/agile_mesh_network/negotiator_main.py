@@ -85,11 +85,13 @@ class TunnelsState:
         return [lt.model() for lt in self.tunnels.values()]
 
     def register_tunnel_created_callback(self, callback):
-        assert not self.tunnel_created_callback
+        if callback:
+            assert not self.tunnel_created_callback
         self.tunnel_created_callback = callback
 
     def register_tunnel_destroyed_callback(self, callback):
-        assert not self.tunnel_destroyed_callback
+        if callback:
+            assert not self.tunnel_destroyed_callback
         self.tunnel_destroyed_callback = callback
 
     # TODO notify via RPC when a tunnel is destroyed
@@ -124,8 +126,6 @@ class RpcResponder:
             self.socket_path = socket_path
         self.rpc_server = RpcUnixServer(self.socket_path, self._handle_command)
         self._tunnels_state = tunnels_state
-        tunnels_state.register_tunnel_created_callback(self.notify_tunnel_created)
-        tunnels_state.register_tunnel_destroyed_callback(self.notify_tunnel_destroyed)
 
     def __str__(self):
         return f"RpcResponder server at {self.socket_path}"
@@ -140,10 +140,16 @@ class RpcResponder:
         await self.close_wait()
 
     async def start_server(self):
+        self._tunnels_state.register_tunnel_created_callback(self.notify_tunnel_created)
+        self._tunnels_state.register_tunnel_destroyed_callback(
+            self.notify_tunnel_destroyed
+        )
         await self.rpc_server.start()
 
     async def close_wait(self):
         await self.rpc_server.close_wait()
+        self._tunnels_state.register_tunnel_created_callback(None)
+        self._tunnels_state.register_tunnel_destroyed_callback(None)
 
     async def _handle_command(self, session, msg):
         assert not isinstance(msg, RpcBroadcast)
@@ -185,7 +191,7 @@ class RpcResponder:
         tunnels = self._tunnels_state.active_tunnels()
         tunnels = [m.asdict() for m in tunnels]
         for s in list(self.rpc_server.sessions):
-            if not s.is_closed:
+            if s.is_connected:
                 await s.issue_broadcast(
                     topic_name, {"tunnel": tunnel.asdict(), "tunnels": tunnels}
                 )

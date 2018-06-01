@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from async_exit_stack import AsyncExitStack
 
+from agile_mesh_network.common import timeout_backoff
 from agile_mesh_network.common.models import LayersDescriptionRpcModel
 from agile_mesh_network.common.rpc import RpcBroadcast, RpcUnixClient
 from agile_mesh_network.negotiator.process_managers import (
@@ -78,6 +79,56 @@ class IntegrationTestCase(TestCase):
                 rpc = rpc_c.session
                 resp = await rpc.issue_command("dump_tunnels_state")
                 self.assertDictEqual(resp, {"tunnels": []})
+
+        loop.run_until_complete(asyncio.wait_for(f(), timeout=3))
+
+    def test_rpc_client_reconnect(self):
+        loop = self.loop
+        rpc_sock_path = os.path.join(self.temp_dir, "l.sock")
+
+        async def command_cb(session, msg):
+            assert False
+
+        async def f():
+            backoff_semaphore = asyncio.Semaphore(0)
+
+            def _mock_sleep(time):
+                return backoff_semaphore.acquire()
+
+            async with AsyncExitStack() as stack:
+                tunnels_state = await stack.enter_async_context(TunnelsState(loop=loop))
+                stack.enter_context(
+                    patch.object(timeout_backoff, "_sleep", _mock_sleep)
+                )
+
+                async with RpcResponder(tunnels_state, rpc_sock_path):
+                    rpc_c = RpcUnixClient(rpc_sock_path, command_cb)
+                    await rpc_c.start()
+
+                    rpc = rpc_c.session
+                    resp = await rpc.issue_command("dump_tunnels_state")
+                    self.assertDictEqual(resp, {"tunnels": []})
+                    self.assertTrue(rpc.is_connected)
+
+                # Make the session aware that the remote end is gone
+                with self.assertRaises((OSError, ValueError)):
+                    await rpc.issue_command("dump_tunnels_state")
+
+                self.assertFalse(rpc.is_connected)
+
+                backoff_semaphore.release()  # Trigger reconnect
+                # Yield control to event loop to start reconnection.
+                await asyncio.sleep(0.001)
+
+                # Bring back the server, ensure that the session is working.
+                async with RpcResponder(tunnels_state, rpc_sock_path):
+                    backoff_semaphore.release()  # Trigger reconnect
+                    await rpc_c._reconnect_task
+                    resp = await rpc.issue_command("dump_tunnels_state")
+                    self.assertDictEqual(resp, {"tunnels": []})
+                    self.assertTrue(rpc.is_connected)
+
+                await rpc_c.close_wait()
 
         loop.run_until_complete(asyncio.wait_for(f(), timeout=3))
 
