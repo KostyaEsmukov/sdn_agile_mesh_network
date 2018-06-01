@@ -226,7 +226,10 @@ class ManagerTestCase(unittest.TestCase):
                 expected_event_calls,
             ):
                 ev = args[0]
-                self.assertListEqual(sorted(ev.tunnels), sorted(ev_expected))
+                self.assertListEqual(
+                    sorted(t for t, _ in ev.mac_to_tunswitch.values()),
+                    sorted(ev_expected),
+                )
 
         self.loop.run_until_complete(asyncio.wait_for(f(), timeout=3))
 

@@ -3,7 +3,7 @@ import threading
 from concurrent.futures import CancelledError
 from contextlib import ExitStack
 from logging import getLogger
-from typing import Sequence
+from typing import Mapping, Sequence, Tuple
 
 from async_exit_stack import AsyncExitStack
 from ryu import cfg
@@ -213,7 +213,9 @@ class AgileMeshNetworkManager:
         # TODO ?? maybe don't always make a full sync, but use more granular
         # events (like a tunnel has been added/removed)?
         self.ryu_ev_loop_scheduler.send_event_to_observers(
-            EventActiveTunnelsList(valid_tunnels)
+            EventActiveTunnelsList(
+                {mac: (mac_to_tunnel[mac], mac_to_switch[mac]) for mac in valid}
+            )
         )
 
     def _event_flow_packet_in(self):
@@ -407,8 +409,10 @@ class OVSManager:
 
 class EventActiveTunnelsList(EventBase):
 
-    def __init__(self, tunnels: Sequence[TunnelModel]) -> None:
-        self.tunnels = tunnels
+    def __init__(
+        self, mac_to_tunswitch: Mapping[str, Tuple[TunnelModel, SwitchEntity]]
+    ) -> None:
+        self.mac_to_tunswitch = mac_to_tunswitch
 
 
 class SwitchApp(app_manager.RyuApp):
@@ -423,6 +427,8 @@ class SwitchApp(app_manager.RyuApp):
             ryu_ev_loop_scheduler=self._ryu_ev_loop_scheduler
         )
         self._stack = ExitStack()
+        self.relay_mac = None
+        self.is_relay = settings.IS_RELAY
 
     def start(self):
         try:
@@ -442,7 +448,44 @@ class SwitchApp(app_manager.RyuApp):
 
     @set_ev_cls(EventActiveTunnelsList)
     def active_tunnels_list_handler(self, ev):
-        print(ev.tunnels)  # TODO
+        logger.warning("!! event in ryu!!!! %s", ev.mac_to_tunswitch)
+
+        ovs_manager = self.manager.ovs_manager
+        for tunnel, _ in ev.mac_to_tunswitch.values():
+            ovs_manager.add_port_to_bridge(mac_to_tun_name(tunnel.dst_mac))
+        # ovs_manager.del_all_down_ports()
+        # TODO remove from ovs all extraneous tuns (not just down ones).
+
+        relays = [
+            tunnel for tunnel, switch in ev.mac_to_tunswitch.values() if switch.is_relay
+        ]
+        assert len(relays) <= 1
+        if relays:
+            self.relay_mac = relays[0].dst_mac
+
+        # datapath = self._get_datapath()
+        # if datapath is None:
+        #     logger.error(
+        #         "Openflow datapath is None! Is controller connected? "
+        #         "Skipping flows setup"
+        #     )
+        #     return
+        # from time import sleep
+
+        # sleep(1)  # TODO !!!!!!!!!!!
+        # parser = datapath.ofproto_parser
+        # for tunnel in ev.tunnels:
+        #     try:
+        #         out_port = ovs_manager.get_ofport(mac_to_tun_name(tunnel.dst_mac))
+        #         assert out_port >= 0
+
+        #         match = parser.OFPMatch(eth_dst=tunnel.dst_mac)
+        #         actions = [parser.OFPActionOutput(out_port)]
+        #         self.add_flow(datapath, 1, match, actions)
+        #     except:
+        #         logger.error("!! Unable to add a flow!", exc_info=True)
+
+        # TODO remove flows via relay
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -474,7 +517,12 @@ class SwitchApp(app_manager.RyuApp):
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
 
         mod = parser.OFPFlowMod(
-            datapath=datapath, priority=priority, match=match, instructions=inst
+            datapath=datapath,
+            priority=priority,
+            match=match,
+            instructions=inst,
+            # idle_timeout=3600,  # TODO
+            # hard_timeout=3600,  # TODO
         )
         datapath.send_msg(mod)
 
@@ -503,16 +551,46 @@ class SwitchApp(app_manager.RyuApp):
         # learn a mac address to avoid FLOOD next time.
         self.mac_to_port[dpid][src] = in_port
 
-        if dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][dst]
-        else:
-            out_port = ofproto.OFPP_FLOOD
+        out_port = -1
+        if dst == self.manager.ovs_manager.bridge_mac:
+            out_port = ofproto.OFPP_LOCAL
+        elif dst != 'ff:ff:ff:ff:ff:ff':
+            # Try direct tunnel first
+            try:
+                out_port = self.manager.ovs_manager.get_ofport(mac_to_tun_name(dst))
+            except:
+                # Exception: no row "tapanaaaaamzt16" in table Interface
+                pass
+        if out_port < 0:  # no direct connectivity
+            if self.is_relay:
+                if dst == 'ff:ff:ff:ff:ff:ff':
+                    out_port = ofproto.OFPP_FLOOD
+                else:
+                    logger.info("PACKET_IN: dropping packet: not connected")
+                    # TODO ICMP unreachable?
+                    # TODO try to reach them via other switches? like using self.mac_to_port
+                    return
+            else:
+                try:
+                    out_port = self.manager.ovs_manager.get_ofport(mac_to_tun_name(self.relay_mac))
+                    if dst != 'ff:ff:ff:ff:ff:ff':
+                        # TODO ask for direct connectivity?
+                        # self.manager.ask_for_tunnel(src, dst)
+                        pass
+                except:
+                    logger.info("PACKET_IN: dropping packet: no relay connected")
+                    # TODO ICMP unreachable?
+                    return
+        logger.info('decision: out_port %s', out_port)
+
+        # if dst in self.mac_to_port[dpid]:
+        #     out_port = self.mac_to_port[dpid][dst]
 
         actions = [parser.OFPActionOutput(out_port)]
 
-        # install a flow to avoid packet_in next time
         if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+            # install a flow to avoid packet_in next time
+            match = parser.OFPMatch(eth_dst=dst)
             self.add_flow(datapath, 1, match, actions)
 
         data = None
