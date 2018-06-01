@@ -4,7 +4,7 @@ from abc import ABCMeta, abstractmethod
 from concurrent.futures import CancelledError
 from contextlib import ExitStack
 from logging import getLogger
-from typing import Mapping, Sequence, Tuple
+from typing import Mapping, Optional, Sequence, Tuple
 
 from async_exit_stack import AsyncExitStack
 from ryu import cfg
@@ -393,8 +393,15 @@ class OVSManager:
     def get_ofport(self, port_name):
         return self.ovs.get_ofport(port_name)
 
+    def get_ofport_ex(self, port_name):
+        try:
+            return self.get_ofport(port_name)
+        except:
+            # Exception: no row "tapanaaaaamzt16" in table Interface
+            return -1
+
     def _is_port_up(self, port_name):
-        if self.ovs.get_ofport(port_name) < 0:
+        if self.ovs.get_ofport_ex(port_name) < 0:
             # Interface is on the OVS DB, but is missing in the OS.
             return False
         link_state = self.ovs.db_get_val("Interface", port_name, "link_state")
@@ -413,9 +420,9 @@ class OVSManager:
 
 class FlowsLogic:
 
-    def __init__(self, is_relay: bool, ovs_manager: OVSManager):
+    def __init__(self, is_relay: bool, ovs_manager: OVSManager) -> None:
         self.is_relay: bool = is_relay
-        self.relay_mac: str = None
+        self.relay_mac: Optional[str] = None
         self.ovs_manager: OVSManager = ovs_manager
         self.datapath = None
         # self.mac_to_port = {}
@@ -461,57 +468,49 @@ class FlowsLogic:
         # self.mac_to_port.setdefault(dpid, {})
 
         logger.info(
-            f"FlowsLogic: packet in [{dpid} {src} {dst} {in_port}] "
-            "[dpid src dst in_port]"
+            "FlowsLogic: packet in [%s %s %s %s] [dpid src dst in_port]",
+            dpid,
+            src,
+            dst,
+            self._ofport_to_string(in_port, ofproto),
         )
 
         # self.mac_to_port[dpid][src] = in_port
 
+        is_broadcast = self._is_broadcast_mac(dst)
         out_port = -1
         if dst == self.ovs_manager.bridge_mac:
+            # This packet is specifically for us - capture it!
             out_port = ofproto.OFPP_LOCAL
-        elif dst != lib_mac.BROADCAST_STR:
-            # Try direct tunnel first
+        elif not is_broadcast:
+            # This packet is for someone else - send it right away
+            # if receiver is locally connected.
+            out_port = self.ovs_manager.get_ofport_ex(mac_to_tun_name(dst))
+
+        # Either receiver is not directly reachable,
+        # or it's a broadcast/multicast packet.
+        if out_port < 0:
             try:
-                out_port = self.ovs_manager.get_ofport(mac_to_tun_name(dst))
-            except:
-                # Exception: no row "tapanaaaaamzt16" in table Interface
-                pass
-        if out_port < 0:  # no direct connectivity
-            if self.is_relay:
-                if dst == lib_mac.BROADCAST_STR:
-                    out_port = ofproto.OFPP_FLOOD
+                if self.is_relay:
+                    out_port = self._packet_in_relay(dst, ofproto)
                 else:
-                    logger.info("PACKET_IN: dropping packet: not connected")
-                    # TODO ICMP unreachable?
-
-                    # TODO try to reach them via other switches?
-                    # like using self.mac_to_port
-
-                    # TODO maybe try to start negotiation?
-                    # although it's unlikely that they're online.
-                    return
-            else:
-                try:
-                    out_port = self.ovs_manager.get_ofport(
-                        mac_to_tun_name(self.relay_mac)
-                    )
-                    if dst != lib_mac.BROADCAST_STR:
-                        # TODO ask for direct connectivity?
-                        # self.manager.ask_for_tunnel(src, dst)
-                        pass
-                except:
-                    logger.info("PACKET_IN: dropping packet: no relay connected")
-                    # TODO ICMP unreachable?
-                    return
-        logger.info("decision: out_port %s", out_port)
+                    out_port = self._packet_in_board(dst, src, in_port, ofproto)
+            except NoSuitableOutPortError as e:
+                logger.info("PACKET_IN: dropping packet: %s", str(e))
+                # TODO ICMP unreachable?
+                return
+        assert out_port >= 0
+        logger.info(
+            "PACKET_IN: decision: out_port %s", self._ofport_to_string(out_port, ofproto)
+        )
 
         # if dst in self.mac_to_port[dpid]:
         #     out_port = self.mac_to_port[dpid][dst]
 
         actions = [parser.OFPActionOutput(out_port)]
 
-        if out_port != ofproto.OFPP_FLOOD:
+        if not is_broadcast:
+            assert out_port != ofproto.OFPP_FLOOD
             # install a flow to avoid packet_in next time
             match = parser.OFPMatch(eth_dst=dst)
             self.add_flow(datapath, 1, match, actions)
@@ -528,6 +527,55 @@ class FlowsLogic:
             data=data,
         )
         datapath.send_msg(out)
+
+    def _ofport_to_string(self, ofport, ofproto):
+        for s in ("OFPP_LOCAL", "OFPP_FLOOD"):
+            if ofport == getattr(ofproto, s):
+                return s
+        return str(ofport)
+
+    def _is_broadcast_mac(self, mac):
+        # TODO !!! multicast
+        return mac == lib_mac.BROADCAST_STR
+
+    def _packet_in_board(self, dst, src, in_port, ofproto):
+        is_broadcast = self._is_broadcast_mac(dst)
+        if is_broadcast and in_port != ofproto.OFPP_LOCAL:
+            # Broadcast/multicast, originating from somewhere else.
+            # Assuming that we don't relay broadcasts, we should forward
+            # it to the bridge.
+            return ofproto.OFPP_LOCAL
+
+        if not self.relay_mac:
+            raise NoSuitableOutPortError("no relay connected")
+
+        out_port = self.ovs_manager.get_ofport_ex(mac_to_tun_name(self.relay_mac))
+        if out_port < 0:
+            raise NoSuitableOutPortError("relay out_port is faulty")
+
+        # Assuming that each board is connected to a relayer, and
+        # relayers are in the same L2 domain, outgoing broadcast/multicast
+        # packets should be sent to a relayer only.
+
+        if not is_broadcast:
+            # TODO ask for direct connectivity?
+            # self.manager.ask_for_tunnel(src, dst)
+            pass
+        return out_port
+
+    def _packet_in_relay(self, dst, ofproto):
+        if self._is_broadcast_mac(dst):
+            return ofproto.OFPP_FLOOD
+
+        # This packet is for some switch which is not connected yet.
+
+        # TODO try to reach them via other switches?
+        # like using self.mac_to_port
+
+        # TODO maybe try to start negotiation? (then we should also
+        # buffer this packet and send them after the tunnel is created).
+        # Although it's unlikely that they're reachable/will respond.
+        raise NoSuitableOutPortError("destination is not connected")
 
     def add_flow(
         self,
@@ -550,6 +598,10 @@ class FlowsLogic:
             # hard_timeout=3600,  # TODO
         )
         datapath.send_msg(mod)
+
+
+class NoSuitableOutPortError(Exception):
+    pass
 
 
 class EventActiveTunnelsList(EventBase):
