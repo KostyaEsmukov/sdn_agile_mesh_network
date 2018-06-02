@@ -121,6 +121,7 @@ class AgileMeshNetworkManager:
 
         self._stack = AsyncExitStack()
         self._initialization_task = None
+        self._tunnel_creation_tasks = {}
 
         self.topology_database.add_local_db_synced_callback(self._event_db_synced)
 
@@ -145,6 +146,9 @@ class AgileMeshNetworkManager:
     async def __aexit__(self, exc_type, exc_value, exc_tb):
         if self._initialization_task:
             self._initialization_task.cancel()
+        for task in self._tunnel_creation_tasks:
+            task.cancel()
+        self._tunnel_creation_tasks.clear()
         await self._stack.aclose()
 
     async def _initialization(self):
@@ -264,6 +268,31 @@ class AgileMeshNetworkManager:
             layers=layers,
         )  # TODO track result? timeout?
 
+    def ask_for_tunnel(self, dst_mac):
+        try:
+            switch = self.topology_database.find_switch_by_mac(dst_mac)
+        except KeyError:
+            logger.warning(
+                f"Unable to connect to {dst_mac}: no such Switch in the database"
+            )
+            return
+
+        t = None
+
+        async def task():
+            nonlocal t
+            try:
+                await self.connect_switch(switch)
+            except CancelledError:
+                return
+            except:
+                logger.warning(f"Failed to connect to {dst_mac}", exc_info=True)
+            finally:
+                self._tunnel_creation_tasks.pop(t, None)
+
+        t = asyncio.ensure_future(task())
+        self._tunnel_creation_tasks[t] = t
+
 
 class AgileMeshNetworkManagerThread:
 
@@ -278,6 +307,9 @@ class AgileMeshNetworkManagerThread:
     @property
     def ovs_manager(self):
         return self._manager.ovs_manager
+
+    def ask_for_tunnel(self, dst_mac):
+        self._loop.call_soon_threadsafe(self._manager.ask_for_tunnel, dst_mac)
 
     def start_initialization(self):
         self._start_initialization_event.set()
@@ -416,10 +448,16 @@ class OVSManager:
 
 class FlowsLogic:
 
-    def __init__(self, is_relay: bool, ovs_manager: OVSManager) -> None:
+    def __init__(
+        self,
+        is_relay: bool,
+        ovs_manager: OVSManager,
+        manager: AgileMeshNetworkManagerThread,
+    ) -> None:
         self.is_relay: bool = is_relay
         self.relay_mac: Optional[str] = None
         self.ovs_manager: OVSManager = ovs_manager
+        self.manager = manager
         self.datapath = None
         # self.mac_to_port = {}
 
@@ -566,6 +604,13 @@ class FlowsLogic:
             # it to the bridge.
             return ofproto.OFPP_LOCAL
 
+        # Assuming that each board is connected to a relayer, and
+        # relayers are in the same L2 domain, outgoing broadcast/multicast
+        # packets should be sent to a relayer only.
+
+        if not is_broadcast:
+            self.manager.ask_for_tunnel(dst)
+
         if not self.relay_mac:
             raise NoSuitableOutPortError("no relay connected")
 
@@ -573,14 +618,6 @@ class FlowsLogic:
         if out_port < 0:
             raise NoSuitableOutPortError("relay out_port is faulty")
 
-        # Assuming that each board is connected to a relayer, and
-        # relayers are in the same L2 domain, outgoing broadcast/multicast
-        # packets should be sent to a relayer only.
-
-        if not is_broadcast:
-            # TODO ask for direct connectivity?
-            # self.manager.ask_for_tunnel(src, dst)
-            pass
         return out_port
 
     def _packet_in_relay(self, dst, ofproto):
@@ -651,7 +688,9 @@ class SwitchApp(app_manager.RyuApp):
             self._stack.enter_context(self._ryu_ev_loop_scheduler)
             self._stack.enter_context(self.manager)
             self.flows_logic = FlowsLogic(
-                is_relay=settings.IS_RELAY, ovs_manager=self.manager.ovs_manager
+                is_relay=settings.IS_RELAY,
+                ovs_manager=self.manager.ovs_manager,
+                manager=self.manager,
             )
         except:
             self._stack.close()

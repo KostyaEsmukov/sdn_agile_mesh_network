@@ -21,12 +21,14 @@ from agile_mesh_network.common.rpc import RpcCommand, RpcUnixServer
 from agile_mesh_network.common.tun_mapper import mac_to_tun_name
 from agile_mesh_network.ryu import events_scheduler
 from agile_mesh_network.ryu_app import (
-    AgileMeshNetworkManager, FlowsLogic, OFPPacketIn, OVSManager, SwitchApp
+    AgileMeshNetworkManager, AgileMeshNetworkManagerThread, FlowsLogic, OFPPacketIn,
+    OVSManager, SwitchApp
 )
 
 LOCAL_MAC = "00:11:22:33:00:00"
 SECOND_MAC = "00:11:22:33:44:01"
 THIRD_MAC = "00:11:22:33:44:02"
+UNK_MAC = "99:99:99:88:88:88"
 SWITCH_ENTITY_RELAY_DATA = {
     "hostname": "relay1",
     "is_relay": True,
@@ -141,7 +143,6 @@ class ManagerTestCase(unittest.TestCase):
         self.server.stop()
 
     def test_topology_database_sync(self):
-        unk_mac = "99:99:99:88:88:88"
 
         async def f():
             async with AgileMeshNetworkManager(
@@ -160,7 +161,7 @@ class ManagerTestCase(unittest.TestCase):
                 )
 
                 with self.assertRaises(KeyError):
-                    topology_database.find_switch_by_mac(unk_mac)
+                    topology_database.find_switch_by_mac(UNK_MAC)
 
                 self.assertEqual(
                     topology_database.find_switch_by_mac(
@@ -173,11 +174,11 @@ class ManagerTestCase(unittest.TestCase):
                     topology_database.find_switches_by_mac_list([]), []
                 )
                 self.assertListEqual(
-                    topology_database.find_switches_by_mac_list([unk_mac]), []
+                    topology_database.find_switches_by_mac_list([UNK_MAC]), []
                 )
                 self.assertListEqual(
                     topology_database.find_switches_by_mac_list(
-                        [unk_mac, SWITCH_ENTITY_BOARD_DATA["mac"]]
+                        [UNK_MAC, SWITCH_ENTITY_BOARD_DATA["mac"]]
                     ),
                     [SwitchEntity(**SWITCH_ENTITY_BOARD_DATA)],
                 )
@@ -202,6 +203,13 @@ class ManagerTestCase(unittest.TestCase):
                             ],
                         },
                     ),
+                    (
+                        "create_tunnel",
+                        {
+                            "tunnel": TUNNEL_MODEL_BOARD_DATA,
+                            "tunnels": [TUNNEL_MODEL_BOARD_DATA],
+                        },
+                    ),
                 ]
             )
 
@@ -220,20 +228,43 @@ class ManagerTestCase(unittest.TestCase):
                     ryu_ev_loop_scheduler=self.ryu_ev_loop_scheduler
                 ) as manager:
                     manager.start_initialization()
-                    neg = manager.negotiator_rpc
                     await manager._initialization_task
 
-                    # TODO incoming tunnel events are respected in NV
-                    # TODO relay tunnel connection is automatically sent
+                    self.assertDictEqual({}, manager._tunnel_creation_tasks)
+
+                    # Don't attempt to connect to unknown macs.
+                    manager.ask_for_tunnel(UNK_MAC)
+                    self.assertDictEqual({}, manager._tunnel_creation_tasks)
+
+                    # Connect to a switch, ensure that the task is cleaned up.
+                    manager.ask_for_tunnel(SECOND_MAC)
+                    await next(iter(manager._tunnel_creation_tasks.values()))
+                    self.assertDictEqual({}, manager._tunnel_creation_tasks)
+
+                    # Send a broadcast
+                    await next(iter(self.rpc_server.sessions)).issue_broadcast(
+                        "tunnel_created",
+                        {
+                            "tunnel": TUNNEL_MODEL_RELAY_DATA,
+                            "tunnels": [TUNNEL_MODEL_RELAY_DATA],
+                        },
+                    )
+                    await asyncio.sleep(0.001)
 
                     # TODO unknown tunnels after resync are dropped via RPC
 
             expected_event_calls = [
+                # Initialization list:
                 [TunnelModel.from_dict(TUNNEL_MODEL_BOARD_DATA)],
+                # Initialization relay tunnel:
                 [
                     TunnelModel.from_dict(TUNNEL_MODEL_BOARD_DATA),
                     TunnelModel.from_dict(TUNNEL_MODEL_RELAY_DATA),
                 ],
+                # ask_for_tunnel:
+                [TunnelModel.from_dict(TUNNEL_MODEL_BOARD_DATA)],
+                # Broadcast:
+                [TunnelModel.from_dict(TUNNEL_MODEL_RELAY_DATA)],
             ]
             for (args, kwargs), ev_expected in zip_equal(
                 self.ryu_ev_loop_scheduler.send_event_to_observers.call_args_list,
@@ -275,6 +306,7 @@ class FlowsLogicTestCase(unittest.TestCase):
         self.ovs_manager.get_ofport_ex.side_effect = functools.partial(
             get_ofport_ex, self.ovs_manager
         )
+        self.manager = MagicMock(spec=AgileMeshNetworkManagerThread)()
 
     def tearDown(self):
         self._stack.close()
@@ -300,7 +332,7 @@ class FlowsLogicTestCase(unittest.TestCase):
     def test_tunnel_add(self):
         ovs_manager = self.ovs_manager
 
-        fl = FlowsLogic(is_relay=False, ovs_manager=ovs_manager)
+        fl = FlowsLogic(is_relay=False, ovs_manager=ovs_manager, manager=self.manager)
         self.assertIsNone(fl.relay_mac)
 
         # Update with one switch (w/o a relay)
@@ -344,7 +376,7 @@ class FlowsLogicTestCase(unittest.TestCase):
         ovs_manager = self.ovs_manager
         OFPORT_BOARD = 41
 
-        fl = FlowsLogic(is_relay=True, ovs_manager=ovs_manager)
+        fl = FlowsLogic(is_relay=True, ovs_manager=ovs_manager, manager=self.manager)
 
         # Incoming packet from a switch
         msg = self._build_ofp_packet_in(dst_mac=LOCAL_MAC, src_mac=SECOND_MAC)
@@ -418,11 +450,13 @@ class FlowsLogicTestCase(unittest.TestCase):
 
         # TODO !! incoming multicast packet
 
+        self.manager.ask_for_tunnel.assert_not_called()
+
     def test_packet_in_on_board(self):
         ovs_manager = self.ovs_manager
         OFPORT_RELAYER = 41
 
-        fl = FlowsLogic(is_relay=False, ovs_manager=ovs_manager)
+        fl = FlowsLogic(is_relay=False, ovs_manager=ovs_manager, manager=self.manager)
 
         # Incoming packet from a switch
         msg = self._build_ofp_packet_in(dst_mac=LOCAL_MAC, src_mac=SECOND_MAC)
@@ -482,6 +516,8 @@ class FlowsLogicTestCase(unittest.TestCase):
         ovs_manager.get_ofport.assert_called_once_with(mac_to_tun_name(SECOND_MAC))
         ovs_manager.get_ofport.reset_mock()
         msg.datapath.send_msg.assert_not_called()
+        self.manager.ask_for_tunnel.assert_called_once_with(SECOND_MAC)
+        self.manager.ask_for_tunnel.reset_mock()
 
         # Without a connected relay: Outgoing broadcast packet
         msg = self._build_ofp_packet_in(
@@ -521,6 +557,9 @@ class FlowsLogicTestCase(unittest.TestCase):
             ryu_ofproto_parser.OFPMatch(eth_dst=THIRD_MAC), flow_add_msg.match
         )
 
+        self.manager.ask_for_tunnel.assert_called_once_with(THIRD_MAC)
+        self.manager.ask_for_tunnel.reset_mock()
+
         # With a connected relay: Outgoing broadcast packet
         msg = self._build_ofp_packet_in(
             dst_mac="ff:ff:ff:ff:ff:ff",
@@ -535,6 +574,8 @@ class FlowsLogicTestCase(unittest.TestCase):
         # PACKET_OUT should be sent
         self.assertEqual(OFPORT_RELAYER, packet_out_msg.actions[0].port)
         self.assertEqual(ryu_ofproto.OFPP_LOCAL, packet_out_msg.in_port)
+
+        self.manager.ask_for_tunnel.assert_not_called()
 
 
 # class RyuAppTestCase(unittest.TestCase):
