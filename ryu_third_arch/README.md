@@ -101,7 +101,7 @@ install it from there.
     allow-ovs bramn
     iface bramn inet static
         ovs_type OVSBridge
-        ovs_extra set bridge bramn other-config:hwaddr="${MAC_ADDRESS}"
+        ovs_extra set bridge bramn other-config:hwaddr="${MAC_ADDRESS}" -- set bridge bramn other-config:disable-in-band=true
         address ${IP_ADDRESS}
         netmask 255.255.255.0
     EOF

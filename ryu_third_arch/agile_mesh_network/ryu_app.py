@@ -34,6 +34,7 @@ logger = getLogger("amn_ryu_app")
 # TODO https://github.com/osrg/ryu/blob/master/ryu/services/protocols/bgp/application.py
 
 OVSDB_PORT = 6640  # The IANA registered port for OVSDB [RFC7047]
+RYU_PORT = 6633  # See also ofproto_v1_4.OFP_TCP_PORT
 
 
 def is_group_mac(mac):
@@ -392,6 +393,9 @@ class OVSManager:
     def __exit__(self, exc_type, exc_value, exc_tb):
         pass
 
+    def set_controller(self):
+        self.ovs.set_controller([f"tcp:127.0.0.1:{RYU_PORT}"])
+
     @property
     def bridge_mac(self):
         if not self._bridge_mac:
@@ -694,6 +698,7 @@ class SwitchApp(app_manager.RyuApp):
                 ovs_manager=self.manager.ovs_manager,
                 manager=self.manager,
             )
+            self.manager.ovs_manager.set_controller()
         except:
             self._stack.close()
             raise
@@ -702,9 +707,6 @@ class SwitchApp(app_manager.RyuApp):
     def stop(self):
         self._stack.close()
         super().stop()
-
-    # def _get_datapath(self) -> Datapath:
-    #     return ofctl_api.get_datapath(self, settings.OVS_DATAPATH_ID)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
