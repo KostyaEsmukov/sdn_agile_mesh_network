@@ -33,7 +33,6 @@ class NegotiatorRpc:
             self._rpc = await self._stack.enter_async_context(
                 RpcUnixClient(self.unix_sock_path, self._rpc_command_handler)
             )
-            # TODO recover on connection loss?
         return self._rpc.session
 
     async def start_tunnel(
@@ -51,7 +50,6 @@ class NegotiatorRpc:
         )
         assert msg.keys() == {"tunnel", "tunnels"}
         self._call_callbacks("create_tunnel", msg)
-        # TODO return??
 
     async def list_tunnels(self) -> Sequence[TunnelModel]:
         session = await self._get_session()

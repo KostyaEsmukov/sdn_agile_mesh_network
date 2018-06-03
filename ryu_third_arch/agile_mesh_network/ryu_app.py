@@ -4,7 +4,6 @@ from contextlib import ExitStack
 from logging import getLogger
 
 from async_exit_stack import AsyncExitStack
-from ryu import cfg
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
@@ -18,8 +17,6 @@ from agile_mesh_network.ryu.events_scheduler import RyuAppEventLoopScheduler
 from agile_mesh_network.ryu.flows_logic import FlowsLogic, TunnelIntentionsProvider
 
 logger = getLogger("amn_ryu_app")
-# CONF = cfg.CONF['amn-app']
-# TODO https://github.com/osrg/ryu/blob/master/ryu/services/protocols/bgp/application.py
 
 
 class AgileMeshNetworkManagerThread(TunnelIntentionsProvider):

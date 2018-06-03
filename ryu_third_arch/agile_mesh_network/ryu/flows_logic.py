@@ -366,9 +366,16 @@ class FlowsLogic:
         # TODO try to reach them via other switches?
         # like using self.mac_to_port
 
-        # TODO maybe try to start negotiation? (then we should also
-        # buffer this packet and send them after the tunnel is created).
-        # Although it's unlikely that they're reachable/will respond.
+        # We could start trying to negotiate with that switch here,
+        # but this is probably a bad idea:
+        # 1. Relays might be in the same L2 domain (in a cloud,
+        # for example), in this case that frame should be forwarded
+        # to other relays, which might have that switch connected.
+        # 2. Switch initiates connection to a relay anyway.
+        # Assuming that relays are deployed in a cloud, which are
+        # always reachable (i.e. no NATs/Proxies in front of them),
+        # if switch is not connected, then it's 99.9% probability
+        # that it's unreachable.
         raise NoSuitableOutPortError("destination is not connected")
 
     def _allow_unicast_packet(self, dst_mac: MAC_ADDRESS):

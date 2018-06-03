@@ -94,8 +94,6 @@ class TunnelsState:
             assert not self.tunnel_destroyed_callback
         self.tunnel_destroyed_callback = callback
 
-    # TODO notify via RPC when a tunnel is destroyed
-
     async def close_tunnels_wait(self):
         for tunnel in self.tunnels:
             tunnel.close()

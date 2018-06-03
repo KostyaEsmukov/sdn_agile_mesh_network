@@ -22,8 +22,6 @@ class AgileMeshNetworkManager:
     # Execution context: run entirely in the asyncio event loop,
     # no thread safety is required.
 
-    # TODO deal with L2 loops
-
     def __init__(self, *, ryu_ev_loop_scheduler: RyuAppEventLoopScheduler) -> None:
         self.ryu_ev_loop_scheduler = ryu_ev_loop_scheduler
         self.topology_database = TopologyDatabase()
