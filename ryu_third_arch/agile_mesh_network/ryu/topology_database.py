@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import random
+import threading
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import CancelledError, ThreadPoolExecutor
 from logging import getLogger
@@ -86,6 +87,10 @@ class LocalTopologyDatabase:
 
 
 class TopologyDatabase:
+    # Execution context: constructed in the asyncio thread, but find*
+    # methods might be used in the Ryu thread, so they must be thread-safe,
+    # fast and blocking.
+
     local_database = LocalTopologyDatabase
     remote_database = MongoRemoteDatabase
     database_sync_interval_seconds = settings.TOPOLOGY_DATABASE_SYNC_INTERVAL_SECONDS
@@ -97,6 +102,7 @@ class TopologyDatabase:
         self._sync_stop_event = asyncio.Event()
         self._sync_task = None
         self._local_db_synced_callbacks = []
+        self._lock = threading.Lock()
 
     def add_local_db_synced_callback(self, callback):
         self._local_db_synced_callbacks.append(callback)
@@ -126,7 +132,9 @@ class TopologyDatabase:
 
     async def _update_local_database(self):
         try:
-            self.local.update(await self.remote.get_database())
+            new_database = await self.remote.get_database()
+            with self._lock:
+                self.local.update(new_database)
             for callback in self._local_db_synced_callbacks:
                 callback()
         except CancelledError:
@@ -135,16 +143,19 @@ class TopologyDatabase:
             logger.error("Exception in the database sync task", exc_info=True)
 
     def find_switch_by_mac(self, mac) -> SwitchEntity:
-        switch = self.local.find_switch_by_mac(mac)
+        with self._lock:
+            switch = self.local.find_switch_by_mac(mac)
         if not switch:
             raise KeyError()
         return switch
 
     def find_switches_by_mac_list(self, mac_list) -> Sequence[SwitchEntity]:
-        return self.local.find_switches_by_mac_list(mac_list)
+        with self._lock:
+            return self.local.find_switches_by_mac_list(mac_list)
 
     def find_random_relay_switches(self, count=1) -> List[SwitchEntity]:
-        switches = list(self.local.find_random_relay_switches(count))
+        with self._lock:
+            switches = list(self.local.find_random_relay_switches(count))
         if not switches:
             raise IndexError()
         return switches

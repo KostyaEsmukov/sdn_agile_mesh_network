@@ -9,6 +9,7 @@ from ryu.ofproto.ofproto_v1_4_parser import OFPAction, OFPMatch, OFPPacketIn
 from agile_mesh_network.common.models import SwitchEntity, TunnelModel
 from agile_mesh_network.common.tun_mapper import mac_to_tun_name
 from agile_mesh_network.ryu.ovs_manager import OVSManager
+from agile_mesh_network.ryu.topology_database import TopologyDatabase
 
 logger = getLogger(__name__)
 
@@ -41,11 +42,13 @@ class FlowsLogic:
         is_relay: bool,
         ovs_manager: OVSManager,
         tunnel_intentions_provider: TunnelIntentionsProvider,
+        topology_database: TopologyDatabase,
     ) -> None:
         self.is_relay: bool = is_relay
         self.relay_mac: Optional[str] = None
         self.ovs_manager: OVSManager = ovs_manager
         self.tunnel_intentions_provider = tunnel_intentions_provider
+        self.topology_database = topology_database
         self.datapath = None
         # self.mac_to_port = {}
 
@@ -198,6 +201,10 @@ class FlowsLogic:
         # packets should be sent to a relayer only.
 
         if not is_broadcast:
+            if not self._allow_unicast_packet(dst):
+                raise NoSuitableOutPortError(
+                    f"This mac address {dst} doesn't belong to any known switch"
+                )
             self.tunnel_intentions_provider.ask_for_tunnel(dst)
 
         if not self.relay_mac:
@@ -213,6 +220,11 @@ class FlowsLogic:
         if is_group_mac(dst):
             return ofproto.OFPP_FLOOD
 
+        if not self._allow_unicast_packet(dst):
+            raise NoSuitableOutPortError(
+                f"This mac address {dst} doesn't belong to any known switch"
+            )
+
         # This packet is for some switch which is not connected yet.
 
         # TODO try to reach them via other switches?
@@ -222,6 +234,15 @@ class FlowsLogic:
         # buffer this packet and send them after the tunnel is created).
         # Although it's unlikely that they're reachable/will respond.
         raise NoSuitableOutPortError("destination is not connected")
+
+    def _allow_unicast_packet(self, dst_mac):
+        assert not is_group_mac(dst_mac)
+        try:
+            self.topology_database.find_switch_by_mac(dst_mac)
+        except KeyError:
+            return False
+        else:
+            return True
 
     def add_flow(
         self,

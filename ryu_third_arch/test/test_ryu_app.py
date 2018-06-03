@@ -25,11 +25,12 @@ from agile_mesh_network.ryu.flows_logic import (
     FlowsLogic, OFPPacketIn, TunnelIntentionsProvider, is_group_mac
 )
 from agile_mesh_network.ryu.ovs_manager import OVSManager
+from agile_mesh_network.ryu.topology_database import TopologyDatabase
 
 LOCAL_MAC = "00:11:22:33:00:00"
 SECOND_MAC = "00:11:22:33:44:01"
 THIRD_MAC = "00:11:22:33:44:02"
-UNK_MAC = "99:99:99:88:88:88"
+UNK_MAC = "98:99:99:88:88:88"
 SWITCH_ENTITY_RELAY_DATA = {
     "hostname": "relay1",
     "is_relay": True,
@@ -308,6 +309,10 @@ class FlowsLogicTestCase(unittest.TestCase):
             get_ofport_ex, self.ovs_manager
         )
         self.tunnel_intentions_provider = MagicMock(spec=TunnelIntentionsProvider)()
+        self.topology_database = MagicMock(spec=TopologyDatabase)()
+        self.topology_database.find_switch_by_mac.side_effect = (
+            self._mocked_find_switch_by_mac
+        )
 
     def tearDown(self):
         self._stack.close()
@@ -323,6 +328,15 @@ class FlowsLogicTestCase(unittest.TestCase):
 
         self.assertFalse(is_group_mac("02:11:22:33:33:01"))
         self.assertFalse(is_group_mac(LOCAL_MAC))
+
+    def _mocked_find_switch_by_mac(self, mac):
+        return {
+            LOCAL_MAC: SwitchEntity.from_dict(SWITCH_ENTITY_RELAY_DATA),
+            SECOND_MAC: SwitchEntity.from_dict(SWITCH_ENTITY_BOARD_DATA),
+            THIRD_MAC: SwitchEntity.from_dict(
+                {**SWITCH_ENTITY_BOARD_DATA, "mac": THIRD_MAC}
+            ),
+        }[mac]
 
     def _build_ofp_packet_in(
         self, dst_mac, src_mac=LOCAL_MAC, in_port=123
@@ -346,6 +360,7 @@ class FlowsLogicTestCase(unittest.TestCase):
             is_relay=False,
             ovs_manager=ovs_manager,
             tunnel_intentions_provider=self.tunnel_intentions_provider,
+            topology_database=self.topology_database,
         )
         self.assertIsNone(fl.relay_mac)
 
@@ -394,6 +409,7 @@ class FlowsLogicTestCase(unittest.TestCase):
             is_relay=True,
             ovs_manager=ovs_manager,
             tunnel_intentions_provider=self.tunnel_intentions_provider,
+            topology_database=self.topology_database,
         )
 
         # Incoming packet from a switch
@@ -440,6 +456,14 @@ class FlowsLogicTestCase(unittest.TestCase):
         ovs_manager.get_ofport.reset_mock()
         msg.datapath.send_msg.assert_not_called()
 
+        # Outgoing to a foreign mac address
+        ovs_manager.get_ofport.side_effect = Exception
+        msg = self._build_ofp_packet_in(dst_mac=UNK_MAC)
+        fl.packet_in(msg)
+        ovs_manager.get_ofport.assert_called_once()
+        ovs_manager.get_ofport.reset_mock()
+        msg.datapath.send_msg.assert_not_called()
+
         # Incoming broadcast packet
         msg = self._build_ofp_packet_in(
             dst_mac="ff:ff:ff:ff:ff:ff", src_mac=SECOND_MAC, in_port=12399
@@ -478,6 +502,7 @@ class FlowsLogicTestCase(unittest.TestCase):
             is_relay=False,
             ovs_manager=ovs_manager,
             tunnel_intentions_provider=self.tunnel_intentions_provider,
+            topology_database=self.topology_database,
         )
 
         # Incoming packet from a switch
@@ -601,6 +626,12 @@ class FlowsLogicTestCase(unittest.TestCase):
         self.assertEqual(OFPORT_RELAYER, packet_out_msg.actions[0].port)
         self.assertEqual(ryu_ofproto.OFPP_LOCAL, packet_out_msg.in_port)
 
+        # Outgoing to a foreign mac address
+        msg = self._build_ofp_packet_in(dst_mac=UNK_MAC)
+        fl.packet_in(msg)
+        ovs_manager.get_ofport.assert_called_once_with(mac_to_tun_name(UNK_MAC))
+        ovs_manager.get_ofport.reset_mock()
+        msg.datapath.send_msg.assert_not_called()
         self.tunnel_intentions_provider.ask_for_tunnel.assert_not_called()
 
 

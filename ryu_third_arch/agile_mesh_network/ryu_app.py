@@ -36,6 +36,10 @@ class AgileMeshNetworkManagerThread(TunnelIntentionsProvider):
     def ovs_manager(self):
         return self._manager.ovs_manager
 
+    @property
+    def topology_database(self):
+        return self._manager.topology_database
+
     def ask_for_tunnel(self, dst_mac):
         self._loop.call_soon_threadsafe(self._manager.ask_for_tunnel, dst_mac)
 
@@ -113,6 +117,7 @@ class SwitchApp(app_manager.RyuApp):
                 is_relay=settings.IS_RELAY,
                 ovs_manager=self.manager.ovs_manager,
                 tunnel_intentions_provider=self.manager,
+                topology_database=self.manager.topology_database,
             )
             self.manager.ovs_manager.set_controller()
         except:
