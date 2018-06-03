@@ -1,34 +1,116 @@
 from abc import ABCMeta, abstractmethod
 from logging import getLogger
-from typing import Mapping, Optional, Sequence, Tuple
+from timeit import default_timer
+from typing import Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 from ryu.controller.controller import Datapath
+from ryu.lib import hub
 from ryu.lib.packet import ether_types, ethernet, packet
-from ryu.ofproto.ofproto_v1_4_parser import OFPAction, OFPMatch, OFPPacketIn
+from ryu.ofproto.ofproto_v1_4_parser import (
+    OFPAction, OFPMatch, OFPPacketIn, OFPPort, OFPPortStatus
+)
 
+from agile_mesh_network import settings
 from agile_mesh_network.common.models import SwitchEntity, TunnelModel
 from agile_mesh_network.common.tun_mapper import mac_to_tun_name
 from agile_mesh_network.ryu.ovs_manager import OVSManager
 from agile_mesh_network.ryu.topology_database import TopologyDatabase
+from agile_mesh_network.ryu.types import MAC_ADDRESS, OFPORT, TUN_NAME
 
 logger = getLogger(__name__)
 
+OF_PRIORITY_RELAY = 1
+OF_PRIORITY_DIRECT = 10
 
-def is_group_mac(mac):
+MAC_TO_TUN_SWITCH_TYPE = Mapping[MAC_ADDRESS, Tuple[TunnelModel, SwitchEntity]]
+TUN_TO_TUN_SWITCH_TYPE = Mapping[TUN_NAME, Tuple[TunnelModel, SwitchEntity]]
+
+
+def is_group_mac(mac: MAC_ADDRESS):
     # Multicast or Broadcast.
     # https://tools.ietf.org/html/rfc7042#section-2.1
     first_octet = int(mac[:2], 16)
     return bool(first_octet & 1)
 
 
+class FlowHysteresis:
+    """This class protects against installing flows before
+    `hysteresis_seconds` pass since adding a port to the bridge.
+
+    This allows to solve 2 problems:
+
+    1. Right after adding a TUN port to the bridge, its ofport might be
+    not initialized yet (in my observations this doesn't last more
+    than 2.0 seconds).
+
+    2. If we install flows immediately, the other side might not even
+    added the port to their bridge yet, so the sent date frames would be
+    lost. The hysteresis should be reasonable enough for both sides
+    to have a chance to add the TUNs to their bridges before actual
+    traffic starts flowing.
+    """
+
+    def __init__(self, is_relay: bool, ovs_manager: OVSManager, hysteresis_seconds=4):
+        self.is_relay = is_relay  # On relay hysteresis is disabled.
+        self.ovs_manager = ovs_manager
+        self.hysteresis_seconds = hysteresis_seconds
+        # Special clock value for relays, because flows to them
+        # must be installed as soon as possible.
+        self._relay_clock = self.clock() - hysteresis_seconds * 2
+        # Mapping from TUN_NAME to `self.clock()`, when the corresponding
+        # tunnel was reported to be `active`.
+        self._tun_to_active_clock = {}
+
+    def clock(self):
+        return default_timer()
+
+    def update(self, tun_to_tunswitch: TUN_TO_TUN_SWITCH_TYPE):
+        known_tuns = set(self._tun_to_active_clock.keys())
+        new_tuns = set(tun_to_tunswitch.keys())
+        extraneous = known_tuns - new_tuns
+        for tun in extraneous:
+            self._tun_to_active_clock.pop(tun, None)
+
+        now = self.clock()
+
+        for tun, (tunnel, switch) in tun_to_tunswitch.items():
+            if tunnel.is_tunnel_active:
+                def_clock = self._relay_clock if switch.is_relay else now
+                # Keep already set, set current clock otherwise.
+                self._tun_to_active_clock.setdefault(tun, def_clock)
+            else:
+                # Remove, if not active.
+                self._tun_to_active_clock.pop(tun, None)
+
+    def get_ofport_if_tun_is_ready(self, tun: TUN_NAME) -> OFPORT:
+        clock_active = self._tun_to_active_clock.get(tun)
+        if clock_active is None:
+            raise PortNotReadyError("Unknown TUN_NAME")
+        if self.is_relay:
+            return self._ofport_or_raise(tun)
+        if self.clock() - clock_active < self.hysteresis_seconds:
+            raise PortNotReadyError("Hysteresis delay is not over yet.")
+        return self._ofport_or_raise(tun)
+
+    def _ofport_or_raise(self, tun):
+        ofport = self.ovs_manager.get_ofport_ex(tun)
+        if ofport < 0:
+            raise PortNotReadyError("Returned ofport is negative.")
+        return ofport
+
+
 class NoSuitableOutPortError(Exception):
+    pass
+
+
+class PortNotReadyError(Exception):
     pass
 
 
 class TunnelIntentionsProvider(metaclass=ABCMeta):
 
     @abstractmethod
-    def ask_for_tunnel(self, dst_mac):
+    def ask_for_tunnel(self, dst_mac: MAC_ADDRESS):
         pass
 
 
@@ -45,20 +127,23 @@ class FlowsLogic:
         topology_database: TopologyDatabase,
     ) -> None:
         self.is_relay: bool = is_relay
-        self.relay_mac: Optional[str] = None
+        self.relay_tun: Optional[TUN_NAME] = None
         self.ovs_manager: OVSManager = ovs_manager
         self.tunnel_intentions_provider = tunnel_intentions_provider
         self.topology_database = topology_database
         self.datapath = None
         # self.mac_to_port = {}
 
+        self.flow_hysteresis = FlowHysteresis(is_relay, ovs_manager)
+
+        # Cached mapping from TUN_NAME to MAC_ADDRESS (for direct tunnels).
+        self._tun_to_dest_mac: Dict[TUN_NAME, MAC_ADDRESS] = {}
+
     def set_datapath(self, datapath: Datapath) -> None:
         # TODO And that's it? just an assignment? Shouldn't we queue unsent messages?
         self.datapath = datapath
 
-    def sync_ovs_from_tunnels(
-        self, mac_to_tunswitch: Mapping[str, Tuple[TunnelModel, SwitchEntity]]
-    ) -> None:
+    def sync_ovs_from_tunnels(self, mac_to_tunswitch: MAC_TO_TUN_SWITCH_TYPE) -> None:
 
         logger.warning(
             "negotiator tunnels are:\n%s\n%s\n%s",
@@ -70,38 +155,72 @@ class FlowsLogic:
             "-" * 40,
         )
 
-        expected_tuns_in_bridge = [
-            mac_to_tun_name(tunnel.dst_mac) for tunnel, _ in mac_to_tunswitch.values()
-        ]
+        tun_to_tunswitch: TUN_TO_TUN_SWITCH_TYPE = {
+            mac_to_tun_name(mac): (tunnel, switch)
+            for mac, (tunnel, switch) in mac_to_tunswitch.items()
+        }
 
-        for tun in expected_tuns_in_bridge:
-            self.ovs_manager.add_port_to_bridge(tun)
+        # TODO clean the dict? Eventually it might eat up a lot of memory.
+        self._tun_to_dest_mac.update(
+            (tun, tunnel.dst_mac) for tun, (tunnel, _) in tun_to_tunswitch.items()
+        )
 
-        current_tuns_set = set(self.ovs_manager.get_ports_in_bridge())
-        expected_tuns_set = set(expected_tuns_in_bridge)
-        extraneous_tuns_in_bridge = current_tuns_set - expected_tuns_set
+        self._update_relay_mac_in_ovs_sync(mac_to_tunswitch)
+        self._add_ports_to_bridge(tun_to_tunswitch)
+        self.flow_hysteresis.update(tun_to_tunswitch)
+        self._remove_extraneous_ports_in_ovs_sync(tun_to_tunswitch)
 
-        if extraneous_tuns_in_bridge:
-            logger.debug(
-                "Removing extraneous ports from bridge: %s", extraneous_tuns_in_bridge
-            )
+        # Create a new eventlet's green thread (akin to asyncio.ensure_future).
+        hub.spawn_after(
+            self.flow_hysteresis.hysteresis_seconds + 0.1,
+            self._update_port_flows,
+            list(tun_to_tunswitch.keys()),
+        )
 
-        for tun in extraneous_tuns_in_bridge:
-            self.ovs_manager.del_port_from_bridge(tun)
-        # TODO remove flows via relay
-
+    def _update_relay_mac_in_ovs_sync(self, mac_to_tunswitch: MAC_TO_TUN_SWITCH_TYPE):
         relays = [
             tunnel for tunnel, switch in mac_to_tunswitch.values() if switch.is_relay
         ]
         assert len(relays) <= 1
+        # TODO maybe drop all except one instead of failing?
+        self.relay_tun = None
         if relays:
-            self.relay_mac = relays[0].dst_mac
+            self.relay_tun = mac_to_tun_name(relays[0].dst_mac)
+
+    def _add_ports_to_bridge(self, tun_to_tunswitch: TUN_TO_TUN_SWITCH_TYPE) -> None:
+        for tun in tun_to_tunswitch.keys():
+            self.ovs_manager.add_port_to_bridge(tun)
+
+    def _remove_extraneous_ports_in_ovs_sync(
+        self, tun_to_tunswitch: TUN_TO_TUN_SWITCH_TYPE
+    ):
+        current_tuns_set = set(self.ovs_manager.get_ports_in_bridge())
+        expected_tuns_set = set(tun_to_tunswitch.keys())
+        extraneous_tuns = current_tuns_set - expected_tuns_set
+
+        if not extraneous_tuns:
+            return
+
+        logger.debug("Removing extraneous ports from bridge: %s", extraneous_tuns)
+
+        for tun in extraneous_tuns:
+            # Flows will be removed in the `ofp_event.EventOFPPortStatus`
+            # event handler (See self.cleanup_flows_for_deleted_port).
+            self.ovs_manager.del_port_from_bridge(tun)
+
+    def _update_port_flows(self, tuns: Iterable[TUN_NAME]):
+        datapath = self.datapath
+        assert datapath, "Datapath is undefined. Is controller connected?"
+        parser = datapath.ofproto_parser
+
+        for tun in tuns:
+            self.add_flows_for_new_port(datapath, parser, tun)
 
     def packet_in(self, msg: OFPPacketIn) -> None:
         datapath = msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-        in_port = msg.match["in_port"]
+        in_port: OFPORT = msg.match["in_port"]
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
@@ -110,9 +229,9 @@ class FlowsLogic:
             # ignore lldp packet
             return
 
-        dst = eth.dst
-        src = eth.src
-        dpid = datapath.id
+        dst: MAC_ADDRESS = eth.dst
+        src: MAC_ADDRESS = eth.src
+        dpid = datapath.id  # Bridge identifier in OVS, usually derived from MAC.
         # self.mac_to_port.setdefault(dpid, {})
 
         logger.info(
@@ -126,23 +245,29 @@ class FlowsLogic:
         # self.mac_to_port[dpid][src] = in_port
 
         is_broadcast = is_group_mac(dst)
-        out_port = -1
+        out_port: OFPORT = -1
+        priority = OF_PRIORITY_DIRECT
         if dst == self.ovs_manager.bridge_mac:
             # This packet is specifically for us - capture it!
             out_port = ofproto.OFPP_LOCAL
         elif not is_broadcast:
             # This packet is for someone else - send it right away
             # if receiver is locally connected.
-            out_port = self.ovs_manager.get_ofport_ex(mac_to_tun_name(dst))
-
+            tun = mac_to_tun_name(dst)
+            try:
+                out_port = self.flow_hysteresis.get_ofport_if_tun_is_ready(tun)
+            except PortNotReadyError:
+                pass
         # Either receiver is not directly reachable,
         # or it's a broadcast/multicast packet.
         if out_port < 0:
             try:
                 if self.is_relay:
-                    out_port = self._packet_in_relay(dst, ofproto)
+                    out_port, priority = self._packet_in_relay(dst, ofproto)
                 else:
-                    out_port = self._packet_in_board(dst, src, in_port, ofproto)
+                    out_port, priority = self._packet_in_board(
+                        dst, src, in_port, ofproto
+                    )
             except NoSuitableOutPortError as e:
                 logger.info("PACKET_IN: dropping packet: %s", str(e))
                 # TODO ICMP unreachable?
@@ -160,9 +285,17 @@ class FlowsLogic:
 
         if not is_broadcast:
             assert out_port != ofproto.OFPP_FLOOD
+            assert priority in (OF_PRIORITY_DIRECT, OF_PRIORITY_RELAY)
+            is_direct = priority == OF_PRIORITY_DIRECT
             # install a flow to avoid packet_in next time
             match = parser.OFPMatch(eth_dst=dst)
-            self.add_flow(datapath, 1, match, actions)
+            self.add_flow(datapath, priority, match, actions, is_direct_flow=is_direct)
+            logger.info(
+                "Added %s flow to %s via %s",
+                "direct" if is_direct else "indirect",
+                dst,
+                self._ofport_to_string(out_port, ofproto),
+            )
 
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
@@ -177,7 +310,7 @@ class FlowsLogic:
         )
         datapath.send_msg(out)
 
-    def _ofport_to_string(self, ofport, ofproto):
+    def _ofport_to_string(self, ofport: OFPORT, ofproto):
         for s in ("OFPP_LOCAL", "OFPP_FLOOD"):
             if ofport == getattr(ofproto, s):
                 return s
@@ -188,13 +321,15 @@ class FlowsLogic:
             port_name = "<unknown port>"
         return f"[ofport={ofport}, port_name={port_name}]"
 
-    def _packet_in_board(self, dst, src, in_port, ofproto):
+    def _packet_in_board(
+        self, dst: MAC_ADDRESS, src: MAC_ADDRESS, in_port: OFPORT, ofproto
+    ):
         is_broadcast = is_group_mac(dst)
         if is_broadcast and in_port != ofproto.OFPP_LOCAL:
             # Broadcast/multicast, originating from somewhere else.
             # Assuming that we don't relay broadcasts, we should forward
             # it to the bridge.
-            return ofproto.OFPP_LOCAL
+            return ofproto.OFPP_LOCAL, OF_PRIORITY_DIRECT
 
         # Assuming that each board is connected to a relayer, and
         # relayers are in the same L2 domain, outgoing broadcast/multicast
@@ -207,18 +342,19 @@ class FlowsLogic:
                 )
             self.tunnel_intentions_provider.ask_for_tunnel(dst)
 
-        if not self.relay_mac:
+        if not self.relay_tun:
             raise NoSuitableOutPortError("no relay connected")
 
-        out_port = self.ovs_manager.get_ofport_ex(mac_to_tun_name(self.relay_mac))
-        if out_port < 0:
-            raise NoSuitableOutPortError("relay out_port is faulty")
+        try:
+            out_port = self.flow_hysteresis.get_ofport_if_tun_is_ready(self.relay_tun)
+        except PortNotReadyError:
+            raise NoSuitableOutPortError("relay out_port is faulty or not ready yet")
 
-        return out_port
+        return out_port, OF_PRIORITY_RELAY
 
-    def _packet_in_relay(self, dst, ofproto):
+    def _packet_in_relay(self, dst: MAC_ADDRESS, ofproto):
         if is_group_mac(dst):
-            return ofproto.OFPP_FLOOD
+            return ofproto.OFPP_FLOOD, None
 
         if not self._allow_unicast_packet(dst):
             raise NoSuitableOutPortError(
@@ -235,7 +371,7 @@ class FlowsLogic:
         # Although it's unlikely that they're reachable/will respond.
         raise NoSuitableOutPortError("destination is not connected")
 
-    def _allow_unicast_packet(self, dst_mac):
+    def _allow_unicast_packet(self, dst_mac: MAC_ADDRESS):
         assert not is_group_mac(dst_mac)
         try:
             self.topology_database.find_switch_by_mac(dst_mac)
@@ -244,24 +380,88 @@ class FlowsLogic:
         else:
             return True
 
+    def add_flows_for_new_port(self, datapath: Datapath, parser, tun: TUN_NAME):
+        # This method should be triggered twice for the same port:
+        # 1. ofport has been initialized (i.e. on ofp_event.EventOFPPortStatus event).
+        # 2. Hysteresis delay is over.
+        # Both conditions must be true for adding a flow. First trigger would fail,
+        # but the second will actually add the flow.
+
+        mac: Optional[MAC_ADDRESS] = self._tun_to_dest_mac.get(tun)
+        if not mac:
+            logger.error(
+                f"Attempted to add flows for {tun}, but it's mac address is unknown."
+            )
+            return
+
+        try:
+            ofport = self.flow_hysteresis.get_ofport_if_tun_is_ready(tun)
+        except PortNotReadyError:
+            logger.debug(
+                f"Expected tun [{tun}] to be ready for a flow, but it's not.",
+                exc_info=True,
+            )
+            return
+
+        actions = [parser.OFPActionOutput(ofport)]
+        match = parser.OFPMatch(eth_dst=mac)
+        # TODO it is okay to add the exact same flow multiple times?
+        # OVS seems to ignore that, but AFAIK according to OpenFlow
+        # spec behavior is undefined in this case.
+        self.add_flow(datapath, OF_PRIORITY_DIRECT, match, actions, is_direct_flow=True)
+        logger.info(f"Added direct flow to {mac} via [tun={tun}, ofport={ofport}]")
+
+    def cleanup_flows_for_deleted_port(self, msg: OFPPortStatus):
+        datapath = msg.datapath
+        ofp_port: OFPPort = msg.desc
+        port_no: OFPORT = ofp_port.port_no
+        assert isinstance(ofp_port.name, bytes)
+        tun = ofp_port.name.decode()
+        self.del_flows_to_ofport(datapath, port_no)
+        logger.info(f"Removed flows via [tun={tun}, ofport={port_no}]")
+
     def add_flow(
         self,
         datapath: Datapath,
         priority,
         match: Sequence[OFPMatch],
         actions: Sequence[OFPAction],
+        is_direct_flow: bool = True,
     ) -> None:
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
 
+        # If flow via relayer was infinite, then we would never receive a
+        # PACKET_IN event for that destination and would never know that we
+        # should attempt to connect directly. By using a finite timeout for
+        # such flows we have a chance for getting a PACKET_IN event at some
+        # point (after the indirect flow is expired).
+        hard_timeout = (
+            0 if is_direct_flow else settings.FLOW_INDIRECT_MAX_LIFETIME_SECONDS
+        )
         mod = parser.OFPFlowMod(
             datapath=datapath,
             priority=priority,
             match=match,
             instructions=inst,
-            # idle_timeout=3600,  # TODO
-            # hard_timeout=3600,  # TODO
+            # idle_timeout=3600,
+            hard_timeout=hard_timeout,
+        )
+        datapath.send_msg(mod)
+
+    def del_flows_to_ofport(self, datapath: Datapath, out_port: OFPORT) -> None:
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        mod = parser.OFPFlowMod(
+            datapath=datapath,
+            command=ofproto.OFPFC_DELETE,
+            buffer_id=ofproto.OFPCML_NO_BUFFER,
+            out_port=out_port,
+            out_group=ofproto.OFPG_ANY,
+            match=parser.OFPMatch(),
+            instructions=[],
         )
         datapath.send_msg(mod)

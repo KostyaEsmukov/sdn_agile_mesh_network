@@ -26,3 +26,7 @@ LAYERS_MANAGER_BALANCER_FERNET_KEYS = [x.encode() for x in fernet_keys_strings i
 OVS_DATAPATH_ID = int(os.getenv("AMN_OVS_DATAPATH_ID", "0000001122333301"), 16)
 
 IS_RELAY = literal_eval(os.getenv("AMN_IS_RELAY", "False"))
+
+FLOW_INDIRECT_MAX_LIFETIME_SECONDS = int(
+    os.getenv("AMN_FLOW_INDIRECT_MAX_LIFETIME_SECONDS", 60)
+)

@@ -150,6 +150,33 @@ class SwitchApp(app_manager.RyuApp):
         self.flows_logic.add_flow(datapath, 0, match, actions)
         self.manager.start_initialization()
 
+    @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
+    def port_status_handler(self, ev):
+        msg = ev.msg
+        reason = msg.reason
+        datapath = msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        ofp_port = msg.desc
+        assert isinstance(ofp_port.name, bytes)
+        tun = ofp_port.name.decode()
+
+        port_desc = f"[ofport={ofp_port.port_no}, name={tun}]"
+
+        if reason == ofproto.OFPPR_ADD:
+            logger.info("port added %s", port_desc)
+        elif reason == ofproto.OFPPR_DELETE:
+            logger.info("port deleted %s", port_desc)
+        elif reason == ofproto.OFPPR_MODIFY:
+            logger.info("port modified %s", port_desc)
+        else:
+            logger.info("Illeagal port state %s %s", port_desc, reason)
+
+        if reason == ofproto.OFPPR_DELETE:
+            self.flows_logic.cleanup_flows_for_deleted_port(msg)
+        elif reason == ofproto.OFPPR_ADD:
+            self.flows_logic.add_flows_for_new_port(datapath, parser, tun)
+
     @set_ev_cls(events.EventActiveTunnelsList)
     def active_tunnels_list_handler(self, ev):
         self.flows_logic.sync_ovs_from_tunnels(ev.mac_to_tunswitch)

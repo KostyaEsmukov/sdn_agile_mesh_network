@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from ryu.base import app_manager
 from ryu.controller.controller import Datapath
+from ryu.lib import hub
 from ryu.lib.packet import ethernet
 from ryu.ofproto import ofproto_v1_4 as ryu_ofproto
 from ryu.ofproto import ofproto_v1_4_parser as ryu_ofproto_parser
@@ -26,6 +27,11 @@ class FlowsLogicTestCase(unittest.TestCase):
 
     def setUp(self):
         self._stack = ExitStack()
+
+        self.hub_spawn_after = self._stack.enter_context(
+            patch.object(hub, "spawn_after")
+        )
+
         get_ofport_ex = OVSManager.get_ofport_ex
         MockedOVSManager = self._stack.enter_context(
             patch("agile_mesh_network.ryu.ovs_manager.OVSManager")
@@ -35,7 +41,9 @@ class FlowsLogicTestCase(unittest.TestCase):
         self.ovs_manager.get_ofport_ex.side_effect = functools.partial(
             get_ofport_ex, self.ovs_manager
         )
+
         self.tunnel_intentions_provider = MagicMock(spec=TunnelIntentionsProvider)()
+
         self.topology_database = MagicMock(spec=TopologyDatabase)()
         self.topology_database.find_switch_by_mac.side_effect = (
             self._mocked_find_switch_by_mac
@@ -89,7 +97,7 @@ class FlowsLogicTestCase(unittest.TestCase):
             tunnel_intentions_provider=self.tunnel_intentions_provider,
             topology_database=self.topology_database,
         )
-        self.assertIsNone(fl.relay_mac)
+        self.assertIsNone(fl.relay_tun)
 
         # Update with one switch (w/o a relay)
         mac_to_tunswitch = {
@@ -99,7 +107,7 @@ class FlowsLogicTestCase(unittest.TestCase):
             )
         }
         fl.sync_ovs_from_tunnels(mac_to_tunswitch)
-        self.assertIsNone(fl.relay_mac)
+        self.assertIsNone(fl.relay_tun)
         ovs_manager.add_port_to_bridge.assert_called_with(
             mac_to_tun_name(SWITCH_ENTITY_BOARD_DATA["mac"])
         )
@@ -117,7 +125,7 @@ class FlowsLogicTestCase(unittest.TestCase):
             ),
         }
         fl.sync_ovs_from_tunnels(mac_to_tunswitch)
-        self.assertEqual(fl.relay_mac, SWITCH_ENTITY_RELAY_DATA["mac"])
+        self.assertEqual(fl.relay_tun, mac_to_tun_name(SWITCH_ENTITY_RELAY_DATA["mac"]))
         self.assertListEqual(
             [tun for (tun,), _ in ovs_manager.add_port_to_bridge.call_args_list],
             [
@@ -282,7 +290,7 @@ class FlowsLogicTestCase(unittest.TestCase):
 
         # Without a connected relay - do nothing.
         ovs_manager.get_ofport.side_effect = Exception
-        fl.relay_mac = None
+        fl.relay_tun = None
 
         # Without a connected relay: Outgoing to a not connected switch
         msg = self._build_ofp_packet_in(dst_mac=SECOND_MAC)
@@ -306,7 +314,7 @@ class FlowsLogicTestCase(unittest.TestCase):
         msg.datapath.send_msg.assert_not_called()
 
         # With a connected relay
-        fl.relay_mac = SECOND_MAC
+        fl.relay_tun = SECOND_MAC
         ovs_manager.get_ofport.side_effect = lambda tun: {
             mac_to_tun_name(SECOND_MAC): OFPORT_RELAYER
         }[tun]
