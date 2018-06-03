@@ -20,10 +20,11 @@ from agile_mesh_network.common.models import SwitchEntity, TunnelModel
 from agile_mesh_network.common.rpc import RpcCommand, RpcUnixServer
 from agile_mesh_network.common.tun_mapper import mac_to_tun_name
 from agile_mesh_network.ryu import events_scheduler
-from agile_mesh_network.ryu_app import (
-    AgileMeshNetworkManager, AgileMeshNetworkManagerThread, FlowsLogic, OFPPacketIn,
-    OVSManager, SwitchApp, is_group_mac
+from agile_mesh_network.ryu.amn_manager import AgileMeshNetworkManager
+from agile_mesh_network.ryu.flows_logic import (
+    FlowsLogic, OFPPacketIn, TunnelIntentionsProvider, is_group_mac
 )
+from agile_mesh_network.ryu.ovs_manager import OVSManager
 
 LOCAL_MAC = "00:11:22:33:00:00"
 SECOND_MAC = "00:11:22:33:44:01"
@@ -107,7 +108,7 @@ class ManagerTestCase(unittest.TestCase):
             patch.object(settings, "NEGOTIATOR_RPC_UNIX_SOCK_PATH", self.rpc_unix_sock)
         )
         self._stack.enter_context(
-            patch("agile_mesh_network.ryu_app.OVSManager", DummyOVSManager)
+            patch("agile_mesh_network.ryu.amn_manager.OVSManager", DummyOVSManager)
         )
         self._stack.enter_context(
             # To avoid automatic connection to a relay.
@@ -297,16 +298,16 @@ class FlowsLogicTestCase(unittest.TestCase):
 
     def setUp(self):
         self._stack = ExitStack()
-        MockedOVSManager = self._stack.enter_context(
-            patch("agile_mesh_network.ryu_app.OVSManager")
-        )
         get_ofport_ex = OVSManager.get_ofport_ex
+        MockedOVSManager = self._stack.enter_context(
+            patch("agile_mesh_network.ryu.ovs_manager.OVSManager")
+        )
         self.ovs_manager = MockedOVSManager()
         self.ovs_manager.bridge_mac = LOCAL_MAC
         self.ovs_manager.get_ofport_ex.side_effect = functools.partial(
             get_ofport_ex, self.ovs_manager
         )
-        self.manager = MagicMock(spec=AgileMeshNetworkManagerThread)()
+        self.tunnel_intentions_provider = MagicMock(spec=TunnelIntentionsProvider)()
 
     def tearDown(self):
         self._stack.close()
@@ -341,7 +342,11 @@ class FlowsLogicTestCase(unittest.TestCase):
     def test_tunnel_add(self):
         ovs_manager = self.ovs_manager
 
-        fl = FlowsLogic(is_relay=False, ovs_manager=ovs_manager, manager=self.manager)
+        fl = FlowsLogic(
+            is_relay=False,
+            ovs_manager=ovs_manager,
+            tunnel_intentions_provider=self.tunnel_intentions_provider,
+        )
         self.assertIsNone(fl.relay_mac)
 
         # Update with one switch (w/o a relay)
@@ -385,7 +390,11 @@ class FlowsLogicTestCase(unittest.TestCase):
         ovs_manager = self.ovs_manager
         OFPORT_BOARD = 41
 
-        fl = FlowsLogic(is_relay=True, ovs_manager=ovs_manager, manager=self.manager)
+        fl = FlowsLogic(
+            is_relay=True,
+            ovs_manager=ovs_manager,
+            tunnel_intentions_provider=self.tunnel_intentions_provider,
+        )
 
         # Incoming packet from a switch
         msg = self._build_ofp_packet_in(dst_mac=LOCAL_MAC, src_mac=SECOND_MAC)
@@ -459,13 +468,17 @@ class FlowsLogicTestCase(unittest.TestCase):
 
         # TODO !! incoming multicast packet
 
-        self.manager.ask_for_tunnel.assert_not_called()
+        self.tunnel_intentions_provider.ask_for_tunnel.assert_not_called()
 
     def test_packet_in_on_board(self):
         ovs_manager = self.ovs_manager
         OFPORT_RELAYER = 41
 
-        fl = FlowsLogic(is_relay=False, ovs_manager=ovs_manager, manager=self.manager)
+        fl = FlowsLogic(
+            is_relay=False,
+            ovs_manager=ovs_manager,
+            tunnel_intentions_provider=self.tunnel_intentions_provider,
+        )
 
         # Incoming packet from a switch
         msg = self._build_ofp_packet_in(dst_mac=LOCAL_MAC, src_mac=SECOND_MAC)
@@ -525,8 +538,10 @@ class FlowsLogicTestCase(unittest.TestCase):
         ovs_manager.get_ofport.assert_called_once_with(mac_to_tun_name(SECOND_MAC))
         ovs_manager.get_ofport.reset_mock()
         msg.datapath.send_msg.assert_not_called()
-        self.manager.ask_for_tunnel.assert_called_once_with(SECOND_MAC)
-        self.manager.ask_for_tunnel.reset_mock()
+        self.tunnel_intentions_provider.ask_for_tunnel.assert_called_once_with(
+            SECOND_MAC
+        )
+        self.tunnel_intentions_provider.ask_for_tunnel.reset_mock()
 
         # Without a connected relay: Outgoing broadcast packet
         msg = self._build_ofp_packet_in(
@@ -566,8 +581,10 @@ class FlowsLogicTestCase(unittest.TestCase):
             ryu_ofproto_parser.OFPMatch(eth_dst=THIRD_MAC), flow_add_msg.match
         )
 
-        self.manager.ask_for_tunnel.assert_called_once_with(THIRD_MAC)
-        self.manager.ask_for_tunnel.reset_mock()
+        self.tunnel_intentions_provider.ask_for_tunnel.assert_called_once_with(
+            THIRD_MAC
+        )
+        self.tunnel_intentions_provider.ask_for_tunnel.reset_mock()
 
         # With a connected relay: Outgoing broadcast packet
         msg = self._build_ofp_packet_in(
@@ -584,7 +601,7 @@ class FlowsLogicTestCase(unittest.TestCase):
         self.assertEqual(OFPORT_RELAYER, packet_out_msg.actions[0].port)
         self.assertEqual(ryu_ofproto.OFPP_LOCAL, packet_out_msg.in_port)
 
-        self.manager.ask_for_tunnel.assert_not_called()
+        self.tunnel_intentions_provider.ask_for_tunnel.assert_not_called()
 
 
 # class RyuAppTestCase(unittest.TestCase):
