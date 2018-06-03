@@ -12,7 +12,7 @@ from async_exit_stack import AsyncExitStack
 
 from agile_mesh_network.common.models import LayersDescriptionRpcModel, TunnelModel
 from agile_mesh_network.common.rpc import RpcBroadcast, RpcCommand, RpcUnixServer
-from agile_mesh_network.negotiator.process_managers import openvpn_config
+from agile_mesh_network.negotiator.layers import openvpn_config
 from agile_mesh_network.negotiator.tunnel import PendingTunnel, TunnelIntention
 
 logger = getLogger("negotiator")

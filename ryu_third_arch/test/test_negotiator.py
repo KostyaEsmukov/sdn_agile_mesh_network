@@ -12,9 +12,11 @@ from async_exit_stack import AsyncExitStack
 from agile_mesh_network.common import timeout_backoff
 from agile_mesh_network.common.models import LayersDescriptionRpcModel
 from agile_mesh_network.common.rpc import RpcBroadcast, RpcUnixClient
-from agile_mesh_network.negotiator.process_managers import (
-    BaseOpenvpnProcessManager, OpenvpnInitiatorProcessManager, OpenvpnProcessProtocol,
-    OpenvpnResponderProcessManager
+from agile_mesh_network.negotiator.layers import (
+    OpenvpnInitiatorProcessManager, OpenvpnResponderProcessManager
+)
+from agile_mesh_network.negotiator.layers.openvpn import (
+    BaseOpenvpnProcessManager, OpenvpnProcessProtocol
 )
 from agile_mesh_network.negotiator_main import (
     RpcResponder, TcpExteriorServer, TunnelsState

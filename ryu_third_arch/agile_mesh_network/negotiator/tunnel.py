@@ -6,7 +6,7 @@ from agile_mesh_network.common.models import (
     LayersDescriptionModel, LayersDescriptionRpcModel, LayersList,
     NegotiationIntentionModel, TunnelModel
 )
-from agile_mesh_network.negotiator.process_managers import ProcessManager
+from agile_mesh_network.negotiator.layers import ProcessManager
 from agile_mesh_network.negotiator.tunnel_protocols import (
     InitiatorExteriorTcpProtocol, PipeContext, ResponderExteriorTcpProtocol
 )
