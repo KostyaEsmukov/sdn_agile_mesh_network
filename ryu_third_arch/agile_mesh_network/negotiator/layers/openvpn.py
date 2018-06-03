@@ -70,12 +70,18 @@ class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
     async def _start_openvpn_process(self, args):
         logger.info("Starting openvpn process: %s %r", self._exec_path, args)
         loop = asyncio.get_event_loop()
-        self._process_transport, _ = await loop.subprocess_exec(
+        self._process_transport, self._process_protocol = await loop.subprocess_exec(
             lambda: OpenvpnProcessProtocol(self._pipe_context),
             self._exec_path,
             *args,
             stdin=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
+        )
+
+    async def tunnel_started(self, timeout=None):
+        # TODO timeout? deal with the hardcode.
+        await asyncio.wait_for(
+            self._process_protocol.fut_tunnel_ready, timeout=(timeout or 10)
         )
 
     @property
@@ -84,7 +90,8 @@ class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
             return False
         if self._process_transport is None:
             return False
-        # TODO make this more granular (respect negotiation phase?)
+        if not self._process_protocol.fut_tunnel_ready.done():
+            return False
         return True
 
     @property
@@ -161,4 +168,8 @@ class OpenvpnInitiatorProcessManager(BaseOpenvpnProcessManager):
 
 
 class OpenvpnProcessProtocol(BaseProcessProtocol):
-    pass
+
+    def is_tunnel_ready(self, data):
+        on_client = b"Initialization Sequence Completed"
+        on_server = b"[client] Peer Connection Initiated"
+        return on_client in data or on_server in data

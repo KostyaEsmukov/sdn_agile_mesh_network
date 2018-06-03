@@ -67,6 +67,10 @@ class ProcessManager(metaclass=ABCMeta):
     async def start(self, timeout=None):
         pass
 
+    @abstractmethod
+    async def tunnel_started(self, timeout=None):
+        pass
+
     @property
     @abstractmethod
     def is_tunnel_active(self):
@@ -174,6 +178,7 @@ class BaseProcessProtocol(asyncio.SubprocessProtocol, metaclass=ABCMeta):
         self.pipe_context = pipe_context
         self.fut_exit: Awaitable[None] = asyncio.Future()
         self.stdout_data = b""  # stderr is piped to stdout
+        self.fut_tunnel_ready: Awaitable[None] = asyncio.Future()
 
     def connection_made(self, transport):
         self.transport = transport
@@ -183,9 +188,20 @@ class BaseProcessProtocol(asyncio.SubprocessProtocol, metaclass=ABCMeta):
 
     def pipe_data_received(self, fd, data):
         self.stdout_data += data
+        try:
+            if not self.fut_tunnel_ready.done():
+                if self.is_tunnel_ready(self.stdout_data):
+                    future_set_result_silent(self.fut_tunnel_ready, None)
+        except Exception as e:
+            future_set_exception_silent(self.fut_tunnel_ready, e)
+
+    @abstractmethod
+    def is_tunnel_ready(self, data):
+        pass
 
     def process_exited(self):
         self.fut_exit.set_result(None)
+        future_set_exception_silent(self.fut_tunnel_ready, Exception('Process exited'))
         self.pipe_context.close()
 
     def log_stopped(self):

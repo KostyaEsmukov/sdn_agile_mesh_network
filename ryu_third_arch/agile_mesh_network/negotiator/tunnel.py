@@ -173,6 +173,7 @@ class _InitiatorPendingTunnel(PendingTunnel):
                 self.tunnel_intention.dst_mac, self._layers, pipe_context
             )
             await pm.start(self._timeout)
+            await pm.tunnel_started()  # TODO timeout??
             return Tunnel(self.tunnel_intention, pm)
 
 
@@ -205,4 +206,5 @@ class _ResponderPendingTunnel(PendingTunnel):
             )
             await pm.start()  # TODO timeout??
             self._protocol.write_ack()
+            await pm.tunnel_started()  # TODO timeout??
             return Tunnel(self.tunnel_intention, pm)

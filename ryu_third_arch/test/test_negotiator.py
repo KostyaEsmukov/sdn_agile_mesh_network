@@ -25,8 +25,9 @@ from agile_mesh_network.negotiator_main import (
 logger = getLogger(__name__)
 RUN_TCP_PATH = os.path.join(os.path.dirname(__file__), "bin", "run_tcp.py")
 
-RUN_TCP_CLIENT_DATA = "hi please don't change my request"
-RUN_TCP_SERVER_DATA = "hi please don't change my response"
+RUN_TCP_DONE_DATA = "please"
+RUN_TCP_CLIENT_DATA = "hi please don't change my request."
+RUN_TCP_SERVER_DATA = "hi please don't change my response."
 
 
 class IntegrationTestCase(TestCase):
@@ -135,6 +136,11 @@ class IntegrationTestCase(TestCase):
         loop.run_until_complete(asyncio.wait_for(f(), timeout=3))
 
     @patch.object(BaseOpenvpnProcessManager, "_exec_path", RUN_TCP_PATH)
+    @patch.object(
+        OpenvpnProcessProtocol,
+        "is_tunnel_ready",
+        lambda self, data: RUN_TCP_DONE_DATA.encode() in data,
+    )
     @patch.object(
         OpenvpnResponderProcessManager,
         "_build_process_args",
