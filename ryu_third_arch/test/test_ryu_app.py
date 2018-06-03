@@ -22,7 +22,7 @@ from agile_mesh_network.common.tun_mapper import mac_to_tun_name
 from agile_mesh_network.ryu import events_scheduler
 from agile_mesh_network.ryu_app import (
     AgileMeshNetworkManager, AgileMeshNetworkManagerThread, FlowsLogic, OFPPacketIn,
-    OVSManager, SwitchApp
+    OVSManager, SwitchApp, is_group_mac
 )
 
 LOCAL_MAC = "00:11:22:33:00:00"
@@ -313,6 +313,15 @@ class FlowsLogicTestCase(unittest.TestCase):
 
     def assertOFPMatchEquals(self, m1, m2):
         self.assertEqual(m1.items(), m2.items())
+
+    def test_group_mac(self):
+        # https://tools.ietf.org/html/rfc7042#section-2.1
+        self.assertTrue(is_group_mac("ff:ff:ff:ff:ff:ff"))
+        self.assertTrue(is_group_mac("01:00:5E:00:00:00"))
+        self.assertTrue(is_group_mac("33:33:00:00:11:22"))
+
+        self.assertFalse(is_group_mac("02:11:22:33:33:01"))
+        self.assertFalse(is_group_mac(LOCAL_MAC))
 
     def _build_ofp_packet_in(
         self, dst_mac, src_mac=LOCAL_MAC, in_port=123

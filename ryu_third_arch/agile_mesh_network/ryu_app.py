@@ -14,7 +14,6 @@ from ryu.controller import ofp_event
 from ryu.controller.controller import Datapath, ofp_event
 from ryu.controller.event import EventBase
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
-from ryu.lib import mac as lib_mac
 from ryu.lib.ovs import bridge as ovs_bridge
 from ryu.lib.ovs import vsctl as ovs_vsctl
 from ryu.lib.packet import ether_types, ethernet, packet
@@ -35,6 +34,13 @@ logger = getLogger("amn_ryu_app")
 # TODO https://github.com/osrg/ryu/blob/master/ryu/services/protocols/bgp/application.py
 
 OVSDB_PORT = 6640  # The IANA registered port for OVSDB [RFC7047]
+
+
+def is_group_mac(mac):
+    # Multicast or Broadcast.
+    # https://tools.ietf.org/html/rfc7042#section-2.1
+    first_octet = int(mac[:2], 16)
+    return bool(first_octet & 1)
 
 
 class NegotiatorRpc:
@@ -534,7 +540,7 @@ class FlowsLogic:
 
         # self.mac_to_port[dpid][src] = in_port
 
-        is_broadcast = self._is_broadcast_mac(dst)
+        is_broadcast = is_group_mac(dst)
         out_port = -1
         if dst == self.ovs_manager.bridge_mac:
             # This packet is specifically for us - capture it!
@@ -592,12 +598,8 @@ class FlowsLogic:
                 return s
         return str(ofport)
 
-    def _is_broadcast_mac(self, mac):
-        # TODO !!! multicast
-        return mac == lib_mac.BROADCAST_STR
-
     def _packet_in_board(self, dst, src, in_port, ofproto):
-        is_broadcast = self._is_broadcast_mac(dst)
+        is_broadcast = is_group_mac(dst)
         if is_broadcast and in_port != ofproto.OFPP_LOCAL:
             # Broadcast/multicast, originating from somewhere else.
             # Assuming that we don't relay broadcasts, we should forward
@@ -621,7 +623,7 @@ class FlowsLogic:
         return out_port
 
     def _packet_in_relay(self, dst, ofproto):
-        if self._is_broadcast_mac(dst):
+        if is_group_mac(dst):
             return ofproto.OFPP_FLOOD
 
         # This packet is for some switch which is not connected yet.
