@@ -93,6 +93,15 @@ class OVSManager:
             # Exception: no row "tapanaaaaamzt16" in table Interface
             return -1
 
+    def get_port_name_by_ofport(self, ofport: int) -> str:
+        with self._lock:
+            ports = self.ovs.get_port_name_list()
+        for port_name in ports:
+            ofport_ = self.get_ofport_ex(port_name)
+            if ofport_ == ofport:
+                return port_name
+        raise KeyError("Port not found")
+
     def _is_port_up(self, port_name):
         if self.get_ofport_ex(port_name) < 0:
             # Interface is on the OVS DB, but is missing in the OS.

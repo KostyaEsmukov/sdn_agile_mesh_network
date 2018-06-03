@@ -58,10 +58,10 @@ class FlowsLogic:
     ) -> None:
 
         logger.warning(
-            "FlowsLogic: negotiator tunnels are:\n%s\n%s\n%s",
+            "negotiator tunnels are:\n%s\n%s\n%s",
             "-" * 40,
-            "\n".join(
-                f"- {mac} {mac_to_tun_name(mac)} {swi.hostname}:\n|--{tun}\n|--{swi}"
+            "\n\n".join(
+                f"- {mac} {mac_to_tun_name(mac)} {swi.hostname}:\n  |--{tun}\n  |--{swi}"
                 for mac, (tun, swi) in sorted(mac_to_tunswitch.items())
             ),
             "-" * 40,
@@ -113,7 +113,7 @@ class FlowsLogic:
         # self.mac_to_port.setdefault(dpid, {})
 
         logger.info(
-            "FlowsLogic: packet in [%s %s %s %s] [dpid src dst in_port]",
+            "packet in [%s %s %s %s] [dpid src dst in_port]",
             dpid,
             src,
             dst,
@@ -178,7 +178,12 @@ class FlowsLogic:
         for s in ("OFPP_LOCAL", "OFPP_FLOOD"):
             if ofport == getattr(ofproto, s):
                 return s
-        return str(ofport)
+
+        try:
+            port_name = self.ovs_manager.get_port_name_by_ofport(ofport)
+        except KeyError:
+            port_name = "<unknown port>"
+        return f"[ofport={ofport}, port_name={port_name}]"
 
     def _packet_in_board(self, dst, src, in_port, ofproto):
         is_broadcast = is_group_mac(dst)

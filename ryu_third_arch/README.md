@@ -199,6 +199,9 @@ Should be run on each Switch (+ Relays).
     AMN_IS_RELAY=False
     EOF
 
-    export $(cat /opt/amn/ryu-env | xargs) && ryu-manager --verbose /opt/amn/venv/lib/python3.6/site-packages/agile_mesh_network/ryu_app.py
+    export $(cat /opt/amn/ryu-env | xargs) && \
+    ryu-manager \
+    --log-config-file /opt/amn/venv/lib/python3.6/site-packages/agile_mesh_network/ryu_logging.ini \
+    /opt/amn/venv/lib/python3.6/site-packages/agile_mesh_network/ryu_app.py
 
 

@@ -1,4 +1,5 @@
 include requirements.txt
+include agile_mesh_network/ryu_logging.ini
 recursive-exclude test *
 global-exclude __pycache__
 global-exclude *.py[co]
