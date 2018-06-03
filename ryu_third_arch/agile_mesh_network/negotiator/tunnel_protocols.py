@@ -19,8 +19,10 @@ class PipeContext:
         self._closing_set = set()
         self.exterior_transport = None
         self.interior_transport = None
-        self._write_q = []
+        self._write_q_int = []
+        self._write_q_ext = []
         self._close_callbacks = []
+        self._is_exterior_locked = True
         self.is_closed = False
         self.closed_event = asyncio.Event()
 
@@ -33,15 +35,26 @@ class PipeContext:
         assert self.interior_transport is None
         self.interior_transport = interior_transport
         self.add_closing(interior_transport)
-        while self._write_q:
-            self.interior_transport.write(self._write_q.pop(0))
+        while self._write_q_int:
+            self.interior_transport.write(self._write_q_int.pop(0))
+
+    def unlock_exterior(self):
+        """Must be called after negotiation is over, to connect
+        interior with exterior and start piping.
+        """
+        while self._write_q_ext:
+            self.exterior_transport.write(self._write_q_ext.pop(0))
+        self._is_exterior_locked = False
 
     def write_to_exterior(self, data):
+        if self._is_exterior_locked:
+            self._write_q_ext.append(data)
+            return
         self.exterior_transport.write(data)
 
     def write_to_interior(self, data):
         if self.interior_transport is None:
-            self._write_q.append(data)
+            self._write_q_int.append(data)
             return
         self.interior_transport.write(data)
 
@@ -143,6 +156,7 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
             NegotiationMessages.compose_negotiation(self.negotiation_intention)
         )
         self.transport.write(line + b"\n")
+        self.pipe_context.unlock_exterior()
 
     def data_received(self, data):
         if not self.is_negotiated:
@@ -184,6 +198,7 @@ class ResponderExteriorTcpProtocol(BaseExteriorProtocol):
             NegotiationMessages.compose_ack(self.negotiation_intention)
         )
         self.transport.write(line + b"\n")
+        self.pipe_context.unlock_exterior()
 
     def data_received(self, data):
         if not self.is_intention_read:

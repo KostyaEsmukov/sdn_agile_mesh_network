@@ -329,7 +329,7 @@ def negotiator(
         loop.add_signal_handler(
             getattr(signal, signame), functools.partial(stop_loop, loop)
         )
-
+    # TODO add SIGHUP handler, printing out the process_manager stdout
     try:
         logger.info("Running forever...")
         loop.run_forever()
