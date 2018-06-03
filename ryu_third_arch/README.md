@@ -154,6 +154,19 @@ install it from there.
     up "/etc/openvpn/ifup.up"
     EOF
 
+### Socat
+
+    apt remove socat
+    cd /root
+    wget https://github.com/KostyaEsmukov/socat/archive/feature/slip.tar.gz
+    tar xaf slip.tar.gz
+    cd socat*/
+    apt install autoconf libssl-dev yodl
+    autoconf
+    ./configure
+    make
+    make install
+
 ### Negotiator systemd service
 
 Should be run on each Switch (+ Relays).
