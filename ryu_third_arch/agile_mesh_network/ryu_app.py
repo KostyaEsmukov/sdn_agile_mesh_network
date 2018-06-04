@@ -13,7 +13,9 @@ from agile_mesh_network import settings
 from agile_mesh_network.ryu import events
 from agile_mesh_network.ryu.amn_manager import AgileMeshNetworkManager
 from agile_mesh_network.ryu.events_scheduler import RyuAppEventLoopScheduler
-from agile_mesh_network.ryu.flows_logic import FlowsLogic, TunnelIntentionsProvider
+from agile_mesh_network.ryu.flows_logic import (
+    FlowsLogic, OFPriority, TunnelIntentionsProvider
+)
 
 logger = getLogger("amn_ryu_app")
 
@@ -143,7 +145,7 @@ class SwitchApp(app_manager.RyuApp):
             parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)
         ]
         self.flows_logic.set_datapath(datapath)
-        self.flows_logic.add_flow(datapath, 0, match, actions)
+        self.flows_logic.add_flow(datapath, OFPriority.CONTROLLER, match, actions)
         self.manager.start_initialization()
 
     @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)

@@ -23,6 +23,7 @@ logger = getLogger(__name__)
 
 
 class OFPriority(Enum):
+    CONTROLLER = 0
     RELAY = 1
     DIRECT = 10
 
@@ -443,7 +444,7 @@ class FlowsLogic:
     def add_flow(
         self,
         datapath: Datapath,
-        priority,
+        priority: OFPriority,
         match: Sequence[OFPMatch],
         actions: Sequence[OFPAction],
         is_direct_flow: bool = True,
@@ -463,7 +464,7 @@ class FlowsLogic:
         )
         mod = parser.OFPFlowMod(
             datapath=datapath,
-            priority=priority,
+            priority=priority.value,
             match=match,
             instructions=inst,
             # idle_timeout=3600,
