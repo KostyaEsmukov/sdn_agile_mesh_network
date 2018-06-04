@@ -68,7 +68,7 @@ class FlowHysteresis:
         # tunnel was reported to be `active`.
         self._tun_to_active_clock: Dict[TUNPortName, float] = {}
 
-    def clock(self) -> float:
+    def clock(self) -> float:  # pragma: no cover
         return default_timer()
 
     def update(self, tun_to_tunswitch: TUNToTunnelAndSwitch) -> None:
