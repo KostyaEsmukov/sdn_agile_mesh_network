@@ -1,5 +1,4 @@
 import asyncio
-import os
 import subprocess
 from abc import ABCMeta
 from logging import getLogger

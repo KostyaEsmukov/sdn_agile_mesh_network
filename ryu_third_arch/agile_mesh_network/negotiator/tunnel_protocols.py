@@ -26,12 +26,12 @@ class PipeContext:
         self.is_closed = False
         self.closed_event = asyncio.Event()
 
-    def contribute_exterior_transport(self, exterior_transport):
+    def set_exterior_transport(self, exterior_transport):
         assert self.exterior_transport is None
         self.exterior_transport = exterior_transport
         self.add_closing(exterior_transport)
 
-    def contribute_interior_transport(self, interior_transport):
+    def set_interior_transport(self, interior_transport):
         assert self.interior_transport is None
         self.interior_transport = interior_transport
         self.add_closing(interior_transport)
@@ -123,7 +123,7 @@ class BaseExteriorProtocol(asyncio.Protocol, metaclass=ABCMeta):
 
     def connection_made(self, transport):
         self.transport = transport
-        self.pipe_context.contribute_exterior_transport(transport)
+        self.pipe_context.set_exterior_transport(transport)
 
     def connection_lost(self, exc):
         logger.info("%s: connection lost", type(self).__name__, exc_info=exc)

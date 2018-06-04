@@ -3,14 +3,14 @@ import socket
 from abc import ABCMeta, abstractmethod
 from contextlib import closing
 from logging import getLogger
-from typing import Any, Awaitable, Mapping, Set, Tuple, Type
+from typing import Awaitable, Set, Tuple, Type
 
 import psutil
 
 from agile_mesh_network.common.async_utils import (
     future_set_exception_silent, future_set_result_silent
 )
-from agile_mesh_network.common.models import LayersDescriptionModel
+from agile_mesh_network.common.models import LayersDescriptionModel, LayersWithOptions
 from agile_mesh_network.negotiator.tunnel_protocols import PipeContext
 
 logger = getLogger(__name__)
@@ -30,7 +30,7 @@ def add_layers_managers(
 
 
 def get_layers_managers(
-    layers: Mapping[str, Any]
+    layers: LayersWithOptions
 ) -> Tuple[Type["ProcessManager"], Type["ProcessManager"]]:
     key = tuple(sorted(layers.keys()))
     try:
@@ -57,7 +57,7 @@ class ProcessManager(metaclass=ABCMeta):
         return initiator(dst_mac, layers.layers, pipe_context)
 
     def __init__(
-        self, dst_mac: str, layers_options: Mapping[str, Any], pipe_context: PipeContext
+        self, dst_mac: str, layers_options: LayersWithOptions, pipe_context: PipeContext
     ) -> None:
         self._dst_mac = dst_mac
         self._layers_options = layers_options
@@ -161,7 +161,7 @@ class InteriorProtocol(asyncio.Protocol):
 
     def connection_made(self, transport):
         self.transport = transport
-        self.pipe_context.contribute_interior_transport(transport)
+        self.pipe_context.set_interior_transport(transport)
         future_set_result_silent(self.fut_connected, None)
 
     def data_received(self, data):
@@ -201,7 +201,7 @@ class BaseProcessProtocol(asyncio.SubprocessProtocol, metaclass=ABCMeta):
 
     def process_exited(self):
         self.fut_exit.set_result(None)
-        future_set_exception_silent(self.fut_tunnel_ready, Exception('Process exited'))
+        future_set_exception_silent(self.fut_tunnel_ready, Exception("Process exited"))
         self.pipe_context.close()
 
     def log_stopped(self):

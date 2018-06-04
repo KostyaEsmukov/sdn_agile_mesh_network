@@ -5,6 +5,9 @@ from typing import Sequence
 from ryu.lib.ovs import bridge as ovs_bridge
 from ryu.lib.ovs import vsctl as ovs_vsctl
 
+from agile_mesh_network.common.types import MACAddress, TUNPortName
+from agile_mesh_network.ryu.types import OFPort
+
 OVSDB_PORT = 6640  # The IANA registered port for OVSDB [RFC7047]
 RYU_PORT = 6633  # See also ofproto_v1_4.OFP_TCP_PORT
 
@@ -49,7 +52,7 @@ class OVSManager:
         self.ovs.set_controller([f"tcp:127.0.0.1:{RYU_PORT}"])
 
     @property
-    def bridge_mac(self):
+    def bridge_mac(self) -> MACAddress:
         if not self._bridge_mac:
             with self._lock:
                 mac_in_use = self.ovs.db_get_val(
@@ -60,40 +63,40 @@ class OVSManager:
         return self._bridge_mac
 
     @_synchronized
-    def is_port_up(self, port_name):
+    def is_port_up(self, port_name: TUNPortName) -> bool:
         ports = set(self.ovs.get_port_name_list())
         if port_name not in ports:
             return False
         return self._is_port_up(port_name)
 
     @_synchronized
-    def add_port_to_bridge(self, port_name):
+    def add_port_to_bridge(self, port_name: TUNPortName) -> None:
         command = ovs_vsctl.VSCtlCommand(
             "add-port", (self.ovs.br_name, port_name), "--may-exist"
         )
         self.ovs.run_command([command])
 
     @_synchronized
-    def del_port_from_bridge(self, port_name):
+    def del_port_from_bridge(self, port_name: TUNPortName) -> None:
         command = ovs_vsctl.VSCtlCommand("del-port", (self.ovs.br_name, port_name))
         self.ovs.run_command([command])
 
     @_synchronized
-    def get_ports_in_bridge(self) -> Sequence[str]:
+    def get_ports_in_bridge(self) -> Sequence[TUNPortName]:
         return list(self.ovs.get_port_name_list())
 
     @_synchronized
-    def get_ofport(self, port_name):
+    def get_ofport(self, port_name: TUNPortName) -> OFPort:
         return self.ovs.get_ofport(port_name)
 
-    def get_ofport_ex(self, port_name):
+    def get_ofport_ex(self, port_name: TUNPortName) -> OFPort:
         try:
             return self.get_ofport(port_name)
         except:
             # Exception: no row "tapanaaaaamzt16" in table Interface
-            return -1
+            return OFPort(-1)
 
-    def get_port_name_by_ofport(self, ofport: int) -> str:
+    def get_port_name_by_ofport(self, ofport: OFPort) -> TUNPortName:
         with self._lock:
             ports = self.ovs.get_port_name_list()
         for port_name in ports:
@@ -102,7 +105,7 @@ class OVSManager:
                 return port_name
         raise KeyError("Port not found")
 
-    def _is_port_up(self, port_name):
+    def _is_port_up(self, port_name: TUNPortName) -> bool:
         if self.get_ofport_ex(port_name) < 0:
             # Interface is on the OVS DB, but is missing in the OS.
             return False

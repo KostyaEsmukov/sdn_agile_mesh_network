@@ -1,7 +1,7 @@
 import asyncio
 from concurrent.futures import CancelledError
 from logging import getLogger
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from async_exit_stack import AsyncExitStack
 
@@ -33,7 +33,7 @@ class AgileMeshNetworkManager:
 
         self._stack = AsyncExitStack()
         self._initialization_task = None
-        self._tunnel_creation_tasks = {}
+        self._tunnel_creation_tasks: Mapping[asyncio.Future, asyncio.Future] = {}
 
         self.topology_database.add_local_db_synced_callback(self._event_db_synced)
 

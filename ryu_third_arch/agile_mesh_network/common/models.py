@@ -1,9 +1,11 @@
 import base64
 import inspect
 import os
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, NewType, Sequence, Tuple
 
 from dataclasses import asdict, dataclass, field
+
+from .types import MACAddress
 
 
 def random_string():
@@ -11,7 +13,8 @@ def random_string():
     return base64.b64encode(os.urandom(10)).decode()
 
 
-LayersList = Sequence[str]
+LayersList = NewType("LayersList", Sequence[str])
+LayersWithOptions = NewType("LayersWithOptions", Mapping[str, Any])
 
 
 class AsDictMixin:
@@ -32,8 +35,8 @@ class FromDictMixin:
 
 @dataclass(order=True)
 class TunnelModel(AsDictMixin, FromDictMixin):
-    src_mac: str
-    dst_mac: str
+    src_mac: MACAddress
+    dst_mac: MACAddress
     layers: LayersList
     is_dead: bool
     is_tunnel_active: bool
@@ -42,19 +45,19 @@ class TunnelModel(AsDictMixin, FromDictMixin):
 @dataclass
 class LayersDescriptionModel(AsDictMixin):
     protocol: str
-    layers: Mapping[str, Any]
+    layers: LayersWithOptions
 
 
 @dataclass
 class LayersDescriptionRpcModel(LayersDescriptionModel, AsDictMixin, FromDictMixin):
-    dest: Any
+    dest: Tuple[str, int]  # ip, port.
 
 
 @dataclass
 class NegotiationIntentionModel(AsDictMixin):
-    src_mac: str
-    dst_mac: str
-    layers: Mapping[str, Any]
+    src_mac: MACAddress
+    dst_mac: MACAddress
+    layers: LayersWithOptions
 
     # Prevent replay attack for the 'ack' response.
     nonce: str = field(default_factory=random_string)
@@ -64,6 +67,6 @@ class NegotiationIntentionModel(AsDictMixin):
 class SwitchEntity(FromDictMixin):
     hostname: str
     is_relay: bool
-    mac: str
+    mac: MACAddress
     layers_config: Any  # TODO model. LayersDescriptionRpcModel?
     # TODO allow switches to dynamically set their own IP addresses.

@@ -8,7 +8,6 @@ from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
 from ryu.ofproto import ofproto_v1_4
-from ryu.ofproto.ofproto_v1_4_parser import OFPMatch
 
 from agile_mesh_network import settings
 from agile_mesh_network.ryu import events

@@ -1,11 +1,12 @@
 import asyncio
 from abc import ABCMeta, abstractmethod
-from typing import Awaitable, Tuple
+from typing import Awaitable, Generic, Tuple, TypeVar
 
 from agile_mesh_network.common.models import (
-    LayersDescriptionModel, LayersDescriptionRpcModel, LayersList,
+    LayersDescriptionModel, LayersDescriptionRpcModel, LayersList, LayersWithOptions,
     NegotiationIntentionModel, TunnelModel
 )
+from agile_mesh_network.common.types import MACAddress
 from agile_mesh_network.negotiator.layers import ProcessManager
 from agile_mesh_network.negotiator.tunnel_protocols import (
     InitiatorExteriorTcpProtocol, PipeContext, ResponderExteriorTcpProtocol
@@ -14,7 +15,9 @@ from agile_mesh_network.negotiator.tunnel_protocols import (
 
 class BaseTunnel(metaclass=ABCMeta):
 
-    def __init__(self, src_mac, dst_mac, layers: LayersList) -> None:
+    def __init__(
+        self, src_mac: MACAddress, dst_mac: MACAddress, layers: LayersList
+    ) -> None:
         self.src_mac = src_mac
         self.dst_mac = dst_mac
         self.layers = layers
@@ -22,13 +25,13 @@ class BaseTunnel(metaclass=ABCMeta):
 
     @property
     @abstractmethod
-    def is_dead(self):
+    def is_dead(self) -> bool:
         """Tunnel won't be active. This is a final state."""
         pass
 
     @property
     @abstractmethod
-    def is_tunnel_active(self):
+    def is_tunnel_active(self) -> bool:
         """Is tunnel truly alive? Might temporary be False when is_dead
         is False -- which means that the tunnel is not alive, but might be
         up soon.
@@ -36,10 +39,10 @@ class BaseTunnel(metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def close(self):
+    def close(self) -> None:
         pass
 
-    def model(self):
+    def model(self) -> TunnelModel:
         return TunnelModel(
             src_mac=self.src_mac,
             dst_mac=self.dst_mac,
@@ -79,7 +82,9 @@ class TunnelIntention(BaseTunnel):
     def close(self):
         pass  # TODO
 
-    def to_negotiation_intention(self, layers: LayersDescriptionModel):
+    def to_negotiation_intention(
+        self, layers: LayersWithOptions
+    ) -> NegotiationIntentionModel:
         return NegotiationIntentionModel(
             src_mac=self.src_mac, dst_mac=self.dst_mac, layers=layers
         )
@@ -95,7 +100,7 @@ class TunnelIntention(BaseTunnel):
         tunnel_intention = cls(
             src_mac=negotiation_intention.dst_mac,
             dst_mac=negotiation_intention.src_mac,
-            layers=list(negotiation_intention.layers.keys()),
+            layers=LayersList(list(negotiation_intention.layers.keys())),
         )
         layers = LayersDescriptionModel(
             protocol=protocol, layers=negotiation_intention.layers
@@ -125,13 +130,22 @@ class Tunnel(BaseTunnel):
         self.process_manager.close()
 
 
-class PendingTunnel(metaclass=ABCMeta):
+T = TypeVar("T", bound=LayersDescriptionModel)
+
+
+class PendingTunnel(Generic[T], metaclass=ABCMeta):
 
     @classmethod
     def tunnel_intention_for_initiator(
-        cls, src_mac, dst_mac, layers: LayersDescriptionRpcModel, timeout
+        cls,
+        src_mac: MACAddress,
+        dst_mac: MACAddress,
+        layers: LayersDescriptionRpcModel,
+        timeout: float,
     ) -> "PendingTunnel":
-        tunnel_intention = TunnelIntention(src_mac, dst_mac, list(layers.layers.keys()))
+        tunnel_intention = TunnelIntention(
+            src_mac, dst_mac, LayersList(list(layers.layers.keys()))
+        )
         return _InitiatorPendingTunnel(tunnel_intention, layers, timeout)
 
     @classmethod
@@ -142,9 +156,9 @@ class PendingTunnel(metaclass=ABCMeta):
         protocol = ResponderExteriorTcpProtocol(pipe_context)
         return protocol, _ResponderPendingTunnel.negotiate(protocol)
 
-    def __init__(self, tunnel_intention, layers: LayersDescriptionModel) -> None:
+    def __init__(self, tunnel_intention: TunnelIntention, layers: T) -> None:
         self.tunnel_intention = tunnel_intention
-        self._layers: LayersDescriptionModel = layers
+        self._layers: T = layers
 
     @abstractmethod
     async def create_tunnel(self) -> Tunnel:
@@ -154,7 +168,10 @@ class PendingTunnel(metaclass=ABCMeta):
 class _InitiatorPendingTunnel(PendingTunnel):
 
     def __init__(
-        self, tunnel_intention, layers: LayersDescriptionRpcModel, timeout
+        self,
+        tunnel_intention: TunnelIntention,
+        layers: LayersDescriptionRpcModel,
+        timeout: float,
     ) -> None:
         super().__init__(tunnel_intention, layers)
         self._timeout = timeout
@@ -181,7 +198,7 @@ class _ResponderPendingTunnel(PendingTunnel):
 
     def __init__(
         self,
-        tunnel_intention,
+        tunnel_intention: TunnelIntention,
         layers: LayersDescriptionModel,
         protocol: ResponderExteriorTcpProtocol,
     ) -> None:

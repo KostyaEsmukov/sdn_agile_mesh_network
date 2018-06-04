@@ -6,14 +6,18 @@ import logging
 import signal
 import sys
 from logging import getLogger
+from typing import Awaitable, Callable, Dict, Optional, Sequence
 
 import click
 from async_exit_stack import AsyncExitStack
 
 from agile_mesh_network.common.models import LayersDescriptionRpcModel, TunnelModel
 from agile_mesh_network.common.rpc import RpcBroadcast, RpcCommand, RpcUnixServer
+from agile_mesh_network.common.types import MACAddress
 from agile_mesh_network.negotiator.layers import openvpn_config
-from agile_mesh_network.negotiator.tunnel import PendingTunnel, TunnelIntention
+from agile_mesh_network.negotiator.tunnel import (
+    BaseTunnel, PendingTunnel, TunnelIntention
+)
 
 logger = getLogger("negotiator")
 logging.basicConfig(level=logging.INFO)
@@ -22,11 +26,15 @@ logging.basicConfig(level=logging.INFO)
 class TunnelsState:
     """Local state (tunnels + mac addresses)."""
 
-    def __init__(self, *, loop):
+    def __init__(self, *, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
-        self.tunnel_created_callback = None
-        self.tunnel_destroyed_callback = None
-        self.tunnels = {}
+        self.tunnel_created_callback: Optional[
+            Callable[[TunnelModel], Awaitable[None]]
+        ] = None
+        self.tunnel_destroyed_callback: Optional[
+            Callable[[TunnelModel], Awaitable[None]]
+        ] = None
+        self.tunnels: Dict[BaseTunnel, BaseTunnel] = {}
 
     async def __aenter__(self):
         return self
@@ -35,7 +43,9 @@ class TunnelsState:
         logger.info(f"Closing all tunnels...")
         await self.close_tunnels_wait()
 
-    async def _create_pending_tunnel(self, pending_tunnel):
+    async def _create_pending_tunnel(
+        self, pending_tunnel: PendingTunnel
+    ) -> TunnelModel:
         tunnel_intention = pending_tunnel.tunnel_intention
 
         old_tunnel = self.tunnels.get(tunnel_intention)
@@ -59,11 +69,12 @@ class TunnelsState:
             await self.tunnel_created_callback(tunnel_model)
         return tunnel_model
 
-    def _dead_tunnel_handler(self, tunnel):
+    def _dead_tunnel_handler(self, tunnel: BaseTunnel) -> None:
         self.tunnels.pop(tunnel, None)
 
-        async def task(tunnel_model):
+        async def task(tunnel_model: TunnelModel):
             try:
+                assert self.tunnel_destroyed_callback
                 await self.tunnel_destroyed_callback(tunnel_model)
             except:
                 logging.error("Error while destroying a tunnel", exc_info=True)
@@ -73,15 +84,19 @@ class TunnelsState:
             asyncio.ensure_future(task(tunnel_model), loop=self._loop)
 
     async def create_tunnel(
-        self, src_mac, dst_mac, timeout, layers: LayersDescriptionRpcModel
-    ):
+        self,
+        src_mac: MACAddress,
+        dst_mac: MACAddress,
+        timeout: float,
+        layers: LayersDescriptionRpcModel,
+    ) -> TunnelModel:
         pending_tunnel = PendingTunnel.tunnel_intention_for_initiator(
             src_mac, dst_mac, layers, timeout
         )
         tunnel_model = await self._create_pending_tunnel(pending_tunnel)
         return tunnel_model
 
-    def active_tunnels(self):
+    def active_tunnels(self) -> Sequence[TunnelModel]:
         return [lt.model() for lt in self.tunnels.values()]
 
     def register_tunnel_created_callback(self, callback):
@@ -105,7 +120,7 @@ class TunnelsState:
         async def task():
             try:
                 with protocol.pipe_context:
-                    pending_tunnel = await aw_pending_tunnel
+                    pending_tunnel: PendingTunnel = await aw_pending_tunnel
                     await self._create_pending_tunnel(pending_tunnel)
             except:
                 logging.error("Error while creating a responder tunnel", exc_info=True)
@@ -119,7 +134,7 @@ class RpcResponder:
 
     socket_path = "/var/run/amn_negotiator.sock"
 
-    def __init__(self, tunnels_state, socket_path=None):
+    def __init__(self, tunnels_state: TunnelsState, socket_path: str = None) -> None:
         if socket_path:
             self.socket_path = socket_path
         self.rpc_server = RpcUnixServer(self.socket_path, self._handle_command)
@@ -153,9 +168,9 @@ class RpcResponder:
         assert not isinstance(msg, RpcBroadcast)
         assert isinstance(msg, RpcCommand)
 
-        cmd = getattr(self, f"_command_{msg.name}")
+        cmd: Callable[..., Awaitable[Dict]] = getattr(self, f"_command_{msg.name}")
         try:
-            payload = await cmd(**msg.kwargs)
+            payload: Dict = await cmd(**msg.kwargs)
         except Exception as e:
             await msg.respond(e)
             raise
@@ -163,17 +178,19 @@ class RpcResponder:
             await msg.respond(payload)
 
     async def _command_dump_tunnels_state(self):
-        tunnels = self._tunnels_state.active_tunnels()
-        tunnels = [m.asdict() for m in tunnels]
+        tunnels: Sequence[Dict] = [
+            m.asdict() for m in self._tunnels_state.active_tunnels()
+        ]
         return {"tunnels": tunnels}
 
     async def _command_create_tunnel(self, src_mac, dst_mac, timeout, layers):
         layers = LayersDescriptionRpcModel(**layers)
-        tunnel = await self._tunnels_state.create_tunnel(
+        tunnel: TunnelModel = await self._tunnels_state.create_tunnel(
             src_mac, dst_mac, timeout, layers
         )
-        tunnels = self._tunnels_state.active_tunnels()
-        tunnels = [m.asdict() for m in tunnels]
+        tunnels: Sequence[Dict] = [
+            m.asdict() for m in self._tunnels_state.active_tunnels()
+        ]
         # TODO deal with the duplicated response? here and in the notify_tunnel_created.
         return {"tunnel": tunnel.asdict(), "tunnels": tunnels}
 
@@ -185,7 +202,7 @@ class RpcResponder:
     async def notify_tunnel_destroyed(self, tunnel: TunnelModel):
         await self._broadcast_tunnels("tunnel_destroyed", tunnel)
 
-    async def _broadcast_tunnels(self, topic_name, tunnel: TunnelModel):
+    async def _broadcast_tunnels(self, topic_name: str, tunnel: TunnelModel) -> None:
         tunnels = self._tunnels_state.active_tunnels()
         tunnels = [m.asdict() for m in tunnels]
         for s in list(self.rpc_server.sessions):
@@ -199,7 +216,7 @@ class TcpExteriorServerProtocol(asyncio.Protocol):
 
     def __init__(self, protocol_factory):
         try:
-            self.protocol = protocol_factory()
+            self.protocol: asyncio.Protocol = protocol_factory()
         except:
             logger.error("%s: __init__", type(self).__name__, exc_info=True)
             raise
@@ -216,10 +233,16 @@ class TcpExteriorServerProtocol(asyncio.Protocol):
 
 class TcpExteriorServer:
 
-    def __init__(self, tunnels_state, *, tcp_port=None, tcp_host="0.0.0.0"):
+    def __init__(
+        self,
+        tunnels_state: TunnelsState,
+        *,
+        tcp_port: int = None,
+        tcp_host: str = "0.0.0.0",
+    ) -> None:
         self.tcp_host = tcp_host
         self.tcp_port = tcp_port
-        self.server = None
+        self.server: Optional[asyncio.AbstractServer] = None
         self._tunnels_state = tunnels_state
 
     def __str__(self):
@@ -235,7 +258,7 @@ class TcpExteriorServer:
         await self.close_wait()
 
     async def start_server(self):
-        loop = asyncio.get_event_loop()
+        loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
         self.server = await loop.create_server(
             lambda: TcpExteriorServerProtocol(
                 self._tunnels_state.create_tunnel_from_protocol
@@ -252,7 +275,7 @@ class TcpExteriorServer:
 
 
 async def main_async_exit_stack(*, tcp_port, socket_path):
-    loop = asyncio.get_event_loop()
+    loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
     stack = AsyncExitStack()
     tunnels_state = await stack.enter_async_context(TunnelsState(loop=loop))
     await stack.enter_async_context(
@@ -308,7 +331,7 @@ def negotiator(
     """
 
     logger.info("Starting...")
-    loop = asyncio.get_event_loop()
+    loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
 
     openvpn_config.exe_path = openvpn_bin_path
     openvpn_config.client_config_path = openvpn_client_config_path
