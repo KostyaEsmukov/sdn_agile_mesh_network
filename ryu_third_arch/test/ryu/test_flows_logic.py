@@ -58,7 +58,7 @@ class FlowsLogicTestCase(unittest.TestCase):
         self._stack.close()
 
     def assertOFPMatchEquals(self, m1, m2):
-        self.assertEqual(m1.items(), m2.items())
+        self.assertSetEqual(set(m1.items()), set(m2.items()))
 
     def perform_last_spawn_after(self):
         args, kwargs = self.hub_spawn_after.call_args
@@ -296,10 +296,19 @@ class FlowsLogicTestCase(unittest.TestCase):
         )
         fl.packet_in(msg)
         ovs_manager.get_ofport.assert_not_called()
-        packet_out_msg, = self.extract_msg_from_call_args_list(msg.datapath.send_msg)
+        flow_add_msg, packet_out_msg = self.extract_msg_from_call_args_list(
+            msg.datapath.send_msg
+        )
         # PACKET_OUT should be sent
         self.assertEqual(ryu_ofproto.OFPP_FLOOD, packet_out_msg.actions[0].port)
         self.assertEqual(12399, packet_out_msg.in_port)
+        # Flow should be installed
+        self.assertEqual(
+            ryu_ofproto.OFPP_FLOOD, flow_add_msg.instructions[0].actions[0].port
+        )
+        self.assertOFPMatchEquals(
+            ryu_ofproto_parser.OFPMatch(eth_dst="ff:ff:ff:ff:ff:ff"), flow_add_msg.match
+        )
 
         # Outgoing broadcast packet
         msg = self._build_ofp_packet_in(
@@ -309,10 +318,19 @@ class FlowsLogicTestCase(unittest.TestCase):
         )
         fl.packet_in(msg)
         ovs_manager.get_ofport.assert_not_called()
-        packet_out_msg, = self.extract_msg_from_call_args_list(msg.datapath.send_msg)
+        flow_add_msg, packet_out_msg = self.extract_msg_from_call_args_list(
+            msg.datapath.send_msg
+        )
         # PACKET_OUT should be sent
         self.assertEqual(ryu_ofproto.OFPP_FLOOD, packet_out_msg.actions[0].port)
         self.assertEqual(ryu_ofproto.OFPP_LOCAL, packet_out_msg.in_port)
+        # Flow should be installed
+        self.assertEqual(
+            ryu_ofproto.OFPP_FLOOD, flow_add_msg.instructions[0].actions[0].port
+        )
+        self.assertOFPMatchEquals(
+            ryu_ofproto_parser.OFPMatch(eth_dst="ff:ff:ff:ff:ff:ff"), flow_add_msg.match
+        )
 
         # TODO !! incoming multicast packet
 
@@ -384,10 +402,20 @@ class FlowsLogicTestCase(unittest.TestCase):
         )
         fl.packet_in(msg)
         ovs_manager.get_ofport.assert_not_called()
-        packet_out_msg, = self.extract_msg_from_call_args_list(msg.datapath.send_msg)
+        flow_add_msg, packet_out_msg = self.extract_msg_from_call_args_list(
+            msg.datapath.send_msg
+        )
         # PACKET_OUT should be sent
         self.assertEqual(ryu_ofproto.OFPP_LOCAL, packet_out_msg.actions[0].port)
         self.assertEqual(12399, packet_out_msg.in_port)
+        # Flow should be installed
+        self.assertEqual(
+            ryu_ofproto.OFPP_LOCAL, flow_add_msg.instructions[0].actions[0].port
+        )
+        self.assertOFPMatchEquals(
+            ryu_ofproto_parser.OFPMatch(eth_dst="ff:ff:ff:ff:ff:ff", in_port=12399),
+            flow_add_msg.match,
+        )
 
         # Without a connected relay - do nothing.
         ovs_manager.get_ofport.side_effect = Exception
@@ -452,10 +480,20 @@ class FlowsLogicTestCase(unittest.TestCase):
         fl.packet_in(msg)
         ovs_manager.get_ofport.assert_called_once()
         ovs_manager.get_ofport.reset_mock()
-        packet_out_msg, = self.extract_msg_from_call_args_list(msg.datapath.send_msg)
+        flow_add_msg, packet_out_msg = self.extract_msg_from_call_args_list(
+            msg.datapath.send_msg
+        )
         # PACKET_OUT should be sent
         self.assertEqual(OFPORT_RELAYER, packet_out_msg.actions[0].port)
         self.assertEqual(ryu_ofproto.OFPP_LOCAL, packet_out_msg.in_port)
+        # Flow should be installed
+        self.assertEqual(OFPORT_RELAYER, flow_add_msg.instructions[0].actions[0].port)
+        self.assertOFPMatchEquals(
+            ryu_ofproto_parser.OFPMatch(
+                eth_dst="ff:ff:ff:ff:ff:ff", in_port=ryu_ofproto.OFPP_LOCAL
+            ),
+            flow_add_msg.match,
+        )
 
         # Outgoing to a foreign mac address
         msg = self._build_ofp_packet_in(dst_mac=UNK_MAC)

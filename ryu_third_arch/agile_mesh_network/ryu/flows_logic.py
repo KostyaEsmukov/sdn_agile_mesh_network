@@ -256,7 +256,8 @@ class FlowsLogic:
 
         is_broadcast = is_group_mac(dst)
         out_port: OFPort = OFPort(-1)
-        priority: Optional[OFPriority] = OFPriority.DIRECT
+        match = parser.OFPMatch(eth_dst=dst)
+        priority: OFPriority = OFPriority.DIRECT
         if dst == self.ovs_manager.bridge_mac:
             # This packet is specifically for us - capture it!
             out_port = ofproto.OFPP_LOCAL
@@ -273,16 +274,19 @@ class FlowsLogic:
         if out_port < 0:
             try:
                 if self.is_relay:
-                    out_port, priority = self._packet_in_relay(dst, ofproto)
+                    out_port, priority, match = self._packet_in_relay(
+                        dst, ofproto, parser
+                    )
                 else:
-                    out_port, priority = self._packet_in_board(
-                        dst, src, in_port, ofproto
+                    out_port, priority, match = self._packet_in_board(
+                        dst, src, in_port, ofproto, parser
                     )
             except NoSuitableOutPortError as e:
                 logger.info("PACKET_IN: dropping packet: %s", str(e))
                 # TODO ICMP unreachable?
                 return
         assert out_port >= 0
+        assert priority in (OFPriority.DIRECT, OFPriority.RELAY)
         logger.info(
             "PACKET_IN: decision: out_port %s",
             self._ofport_to_string(out_port, ofproto),
@@ -293,19 +297,15 @@ class FlowsLogic:
 
         actions = [parser.OFPActionOutput(out_port)]
 
-        if not is_broadcast:
-            assert out_port != ofproto.OFPP_FLOOD
-            assert priority in (OFPriority.DIRECT, OFPriority.RELAY)
-            is_direct = priority == OFPriority.DIRECT
-            # install a flow to avoid packet_in next time
-            match = parser.OFPMatch(eth_dst=dst)
-            self.add_flow(datapath, priority, match, actions, is_direct_flow=is_direct)
-            logger.info(
-                "Added %s flow to %s via %s",
-                "direct" if is_direct else "indirect",
-                dst,
-                self._ofport_to_string(out_port, ofproto),
-            )
+        is_direct = priority == OFPriority.DIRECT
+        # install a flow to avoid packet_in next time
+        self.add_flow(datapath, priority, match, actions, is_direct_flow=is_direct)
+        logger.info(
+            "Added %s flow to %s via %s",
+            "direct" if is_direct else "indirect",
+            dst,
+            self._ofport_to_string(out_port, ofproto),
+        )
 
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
@@ -332,14 +332,19 @@ class FlowsLogic:
         return f"[ofport={ofport}, port_name={port_name}]"
 
     def _packet_in_board(
-        self, dst: MACAddress, src: MACAddress, in_port: OFPort, ofproto
-    ) -> Tuple[OFPort, OFPriority]:
+        self, dst: MACAddress, src: MACAddress, in_port: OFPort, ofproto, parser
+    ) -> Tuple[OFPort, OFPriority, OFPMatch]:
         is_broadcast = is_group_mac(dst)
+        if is_broadcast:
+            match = parser.OFPMatch(eth_dst=dst, in_port=in_port)
+        else:
+            match = parser.OFPMatch(eth_dst=dst)
+
         if is_broadcast and in_port != ofproto.OFPP_LOCAL:
             # Broadcast/multicast, originating from somewhere else.
             # Assuming that we don't relay broadcasts, we should forward
             # it to the bridge.
-            return ofproto.OFPP_LOCAL, OFPriority.DIRECT
+            return ofproto.OFPP_LOCAL, OFPriority.DIRECT, match
 
         # Assuming that each board is connected to a relayer, and
         # relayers are in the same L2 domain, outgoing broadcast/multicast
@@ -360,13 +365,15 @@ class FlowsLogic:
         except PortNotReadyError:
             raise NoSuitableOutPortError("relay out_port is faulty or not ready yet")
 
-        return out_port, OFPriority.RELAY
+        return out_port, OFPriority.RELAY, match
 
     def _packet_in_relay(
-        self, dst: MACAddress, ofproto
-    ) -> Tuple[OFPort, Optional[OFPriority]]:
+        self, dst: MACAddress, ofproto, parser
+    ) -> Tuple[OFPort, OFPriority, OFPMatch]:
+        match = parser.OFPMatch(eth_dst=dst)
+
         if is_group_mac(dst):
-            return ofproto.OFPP_FLOOD, None
+            return ofproto.OFPP_FLOOD, OFPriority.RELAY, match
 
         if not self._allow_unicast_packet(dst):
             raise NoSuitableOutPortError(
