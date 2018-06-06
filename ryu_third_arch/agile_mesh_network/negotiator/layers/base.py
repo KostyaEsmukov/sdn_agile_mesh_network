@@ -11,6 +11,7 @@ from agile_mesh_network.common.async_utils import (
     future_set_exception_silent, future_set_result_silent
 )
 from agile_mesh_network.common.models import LayersDescriptionModel, LayersWithOptions
+from agile_mesh_network.common.types import MACAddress
 from agile_mesh_network.negotiator.tunnel_protocols import PipeContext
 
 logger = getLogger(__name__)
@@ -44,22 +45,33 @@ class ProcessManager(metaclass=ABCMeta):
 
     @staticmethod
     def from_layers_responder(
-        dst_mac, layers: LayersDescriptionModel, pipe_context: PipeContext
+        dst_mac: MACAddress,
+        src_mac: MACAddress,
+        layers: LayersDescriptionModel,
+        pipe_context: PipeContext,
     ) -> "ProcessManager":
         responder, _ = get_layers_managers(layers.layers)
-        return responder(dst_mac, layers.layers, pipe_context)
+        return responder(dst_mac, src_mac, layers.layers, pipe_context)
 
     @staticmethod
     def from_layers_initiator(
-        dst_mac, layers: LayersDescriptionModel, pipe_context: PipeContext
+        dst_mac: MACAddress,
+        src_mac: MACAddress,
+        layers: LayersDescriptionModel,
+        pipe_context: PipeContext,
     ) -> "ProcessManager":
         _, initiator = get_layers_managers(layers.layers)
-        return initiator(dst_mac, layers.layers, pipe_context)
+        return initiator(dst_mac, src_mac, layers.layers, pipe_context)
 
     def __init__(
-        self, dst_mac: str, layers_options: LayersWithOptions, pipe_context: PipeContext
+        self,
+        dst_mac: MACAddress,
+        src_mac: MACAddress,
+        layers_options: LayersWithOptions,
+        pipe_context: PipeContext,
     ) -> None:
         self._dst_mac = dst_mac
+        self._src_mac = src_mac
         self._layers_options = layers_options
         self._pipe_context = pipe_context
 

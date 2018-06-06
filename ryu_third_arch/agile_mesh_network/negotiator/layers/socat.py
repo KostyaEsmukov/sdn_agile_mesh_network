@@ -1,4 +1,5 @@
 import asyncio
+import asyncio.subprocess
 import subprocess
 from abc import ABCMeta
 from logging import getLogger
@@ -57,8 +58,8 @@ class BaseSocatProcessManager(ProcessManager, metaclass=ABCMeta):
             lambda: SocatProcessProtocol(self._pipe_context),
             self._exec_path,
             *args,
-            stdin=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
+            stdin=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.STDOUT,
         )
 
     async def tunnel_started(self, timeout=None):

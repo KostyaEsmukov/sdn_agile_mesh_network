@@ -187,7 +187,10 @@ class _InitiatorPendingTunnel(PendingTunnel):
             await loop.create_connection(lambda: ext_prot, host, port)
             await ext_prot.fut_negotiated
             pm = ProcessManager.from_layers_initiator(
-                self.tunnel_intention.dst_mac, self._layers, pipe_context
+                self.tunnel_intention.dst_mac,
+                self.tunnel_intention.src_mac,
+                self._layers,
+                pipe_context,
             )
             await pm.start(self._timeout)
             await pm.tunnel_started()  # TODO timeout??
@@ -219,7 +222,10 @@ class _ResponderPendingTunnel(PendingTunnel):
     async def create_tunnel(self) -> Tunnel:
         with self._protocol.pipe_context:
             pm = ProcessManager.from_layers_responder(
-                self.tunnel_intention.dst_mac, self._layers, self._protocol.pipe_context
+                self.tunnel_intention.dst_mac,
+                self.tunnel_intention.src_mac,
+                self._layers,
+                self._protocol.pipe_context,
             )
             await pm.start()  # TODO timeout??
             self._protocol.write_ack()

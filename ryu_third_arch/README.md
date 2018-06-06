@@ -127,7 +127,7 @@ install it from there.
 
 ### Openvpn
 
-    apt install openvpn
+    apt install openvpn arping
     systemctl disable openvpn.service
 
     mkdir -p /etc/openvpn
