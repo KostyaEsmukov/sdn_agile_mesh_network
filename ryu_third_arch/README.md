@@ -222,3 +222,20 @@ Should be run on each Switch (+ Relays).
     /opt/amn/venv/lib/python3.6/site-packages/agile_mesh_network/ryu_app.py
 
 
+## Performance evaluation with flent
+
+Installation:
+
+    echo "" >> /etc/apt/sources.list
+    echo "deb http://httpredir.debian.org/debian/ stretch non-free" >> /etc/apt/sources.list
+    apt update
+    apt install -y --no-install-recommends python3 python3-pip netperf
+    pip3 install flent
+    flent --version
+    # v1.2.2
+
+Measurements:
+
+    # Initiator:
+    flent rrul_be --test-parameter cpu_stats_hosts=localhost --socket-stats -l 60 -H 192.168.128.3 -t t1
+
