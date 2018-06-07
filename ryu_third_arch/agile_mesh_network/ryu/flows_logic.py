@@ -57,7 +57,10 @@ class FlowHysteresis:
     """
 
     def __init__(
-        self, is_relay: bool, ovs_manager: OVSManager, hysteresis_seconds: float = 4
+        self,
+        is_relay: bool,
+        ovs_manager: OVSManager,
+        hysteresis_seconds: float = settings.DIRECT_FLOW_SWITCH_DELAY_SECONDS,
     ) -> None:
         self.is_relay = is_relay  # On relay hysteresis is disabled.
         self.ovs_manager = ovs_manager
@@ -116,7 +119,6 @@ class PortNotReadyError(Exception):
 
 
 class TunnelIntentionsProvider(metaclass=ABCMeta):
-
     @abstractmethod
     def ask_for_tunnel(self, dst_mac: MACAddress) -> None:
         pass
