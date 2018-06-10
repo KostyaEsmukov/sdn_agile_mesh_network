@@ -1,8 +1,4 @@
-
-
-## Installation on Debian 9
-
-This package requires Python 3.6.
+# Agile Mesh Network
 
 ## Packaging
 
@@ -61,7 +57,7 @@ Should be run on a single machine, where the centralized MongoDB instance should
 
 ## Openvpn certificates
 
-Should be done once on a single machine, like a controller.
+Should be done once on a single machine (e.g. a controller).
 
     apt install easy-rsa
     cp -aR /usr/share/easy-rsa/ /root/openvpn-easy-rsa
@@ -77,7 +73,10 @@ Should be done once on a single machine, like a controller.
     tar czf ../openvpn-easy-rsa.tar.gz keys/{ca.crt,dh2048.pem,client.crt,client.key,server.crt,server.key}
     # Transfer this archive to all switches.
 
-## Setup Switch
+
+## Installation on Debian 9
+
+This package requires Python 3.6.
 
 ### Python 3.6
 
