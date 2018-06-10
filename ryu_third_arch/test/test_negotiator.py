@@ -16,7 +16,7 @@ from agile_mesh_network.negotiator.layers import (
     OpenvpnInitiatorProcessManager, OpenvpnResponderProcessManager
 )
 from agile_mesh_network.negotiator.layers.openvpn import (
-    BaseOpenvpnProcessManager, OpenvpnConfig, OpenvpnProcessProtocol
+    BaseOpenvpnProcessManager, OpenvpnProcessProtocol
 )
 from agile_mesh_network.negotiator_main import (
     RpcResponder, TcpExteriorServer, TunnelsState
@@ -52,7 +52,6 @@ class IntegrationTestCase(TestCase):
                 OpenvpnProcessProtocol, "pipe_data_received", openvpn_pipe_data_received
             )
         )
-        self._stack.enter_context(patch.object(OpenvpnConfig, "arping_path", "echo"))
 
     def tearDown(self):
         if self.openvpn_stdout:

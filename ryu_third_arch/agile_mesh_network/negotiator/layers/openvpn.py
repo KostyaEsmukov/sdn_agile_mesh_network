@@ -17,14 +17,12 @@ logger = getLogger(__name__)
 
 class OpenvpnConfig:
     exe_path = "openvpn"
-    arping_path = "arping"  # Requires CAP_NET_RAW, so should be run from root
     client_config_path = "/etc/openvpn/client.conf"
     server_config_path = "/etc/openvpn/server.conf"
 
     def validate(self):
         errors = []
         self._validate_openvpn(errors)
-        self._validate_arping(errors)
         if errors:
             raise ValueError("\n".join(errors))
 
@@ -55,22 +53,6 @@ class OpenvpnConfig:
                     f"{proc.stdout.decode()}"
                 )
         # TODO check client and server don't contain remote/port
-
-    def _validate_arping(self, errors):
-        try:
-            proc = subprocess.run(
-                [self.arping_path, "--help"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            )
-        except Exception as e:
-            errors.append(f"Unable to start ARPing process ({self.arping_path}): {e}")
-        else:
-            if b"ARPing" not in proc.stdout:
-                errors.append(
-                    f"Unable to check ARPing process ({self.arping_path}) version: \n"
-                    f"{proc.stdout.decode()}"
-                )
 
 
 openvpn_config = OpenvpnConfig()
@@ -143,7 +125,8 @@ class OpenvpnResponderProcessManager(BaseOpenvpnProcessManager):
         cd = os.path.dirname(openvpn_config.server_config_path)
         return (
             "--mode",
-            "server",
+            "p2p",
+            "--tls-server",
             "--proto",
             "tcp-server",
             "--port",
@@ -170,15 +153,12 @@ class OpenvpnInitiatorProcessManager(BaseOpenvpnProcessManager):
         await self._start_openvpn_process(self._build_process_args())
         await protocol.fut_connected
 
-    async def tunnel_started(self, *args, **kwargs):
-        await super().tunnel_started(*args, **kwargs)
-        await self._send_arping()
-
     def _build_process_args(self):
         cd = os.path.dirname(openvpn_config.client_config_path)
         return (
             "--proto",
             "tcp-client",
+            "--tls-client",
             "--remote",
             "127.0.0.1",
             str(self._local_port),
@@ -191,59 +171,6 @@ class OpenvpnInitiatorProcessManager(BaseOpenvpnProcessManager):
             "--dev",
             self.tun_dev_name,
         )
-
-    async def _send_arping(self):
-        """Sends L2 frames with src MAC address of the bridge to let
-        the server "learn" our MAC address.
-
-        OpenVPN server doesn't send unicast frames to unknown
-        destinations. Unlike the traditional L2 learning switches,
-        which broadcast frames with "unlearned" dst, OpenVPN drops
-        them. In order to work-around that, the client should
-        send some frame to the server with their MAC address in src,
-        to let the server "learn" the MAC address.
-
-        In the openvpn source code, see the `multi_process_incoming_tun`
-        function for more details.
-        """
-        args = (
-            "-i",
-            self.tun_dev_name,
-            "-c",
-            "3",
-            "-w",
-            "100000",  # 100 ms * 3 = 300ms total execution time.
-            "-p",  # promisc mode (required for custom -s)
-            "-s",
-            self._src_mac,
-            # -b: "255.255.255.255" source IP address. We don't know
-            # IPs, and we don't need a reply. So we are good with
-            # sending out that garbage.
-            "-b",
-            self._dst_mac,
-        )
-        logger.info("Starting arping process: %s %r", openvpn_config.arping_path, args)
-
-        create = asyncio.create_subprocess_exec(
-            openvpn_config.arping_path,
-            *args,
-            stdin=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.STDOUT,
-            stdout=asyncio.subprocess.PIPE,
-        )
-        proc = await create
-
-        data = b""
-        while True:
-            buf = await proc.stdout.readline()
-            if not buf:
-                break
-            data += buf
-
-        await proc.wait()
-        # proc.returncode will be 1, because remote is unlikely to
-        # respond to our bold "255.255.255.255" source address.
-        logger.debug("arping output: %s", data)
 
 
 class OpenvpnProcessProtocol(BaseProcessProtocol):

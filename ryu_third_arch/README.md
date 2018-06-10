@@ -126,7 +126,7 @@ install it from there.
 
 ### Openvpn
 
-    apt install openvpn arping
+    apt install openvpn
     systemctl disable openvpn.service
 
     mkdir -p /etc/openvpn
@@ -140,17 +140,13 @@ install it from there.
     chmod +x /etc/openvpn/ifup.up
 
     cat << EOF > /etc/openvpn/server.conf
-    server-bridge
     key keys/server.key
     ca keys/ca.crt
     cert keys/server.crt
     dh keys/dh2048.pem
-    keepalive 10 60
-    max-clients 2
     user nobody
     group nogroup
     comp-lzo no
-    duplicate-cn
     # txqueuelen 3000
     script-security 2
     up "/etc/openvpn/ifup.up"
