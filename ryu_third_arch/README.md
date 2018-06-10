@@ -151,6 +151,7 @@ install it from there.
     group nogroup
     comp-lzo no
     duplicate-cn
+    # txqueuelen 3000
     script-security 2
     up "/etc/openvpn/ifup.up"
     EOF
@@ -166,6 +167,7 @@ install it from there.
     user nobody
     group nogroup
     comp-lzo no
+    # txqueuelen 3000
     script-security 2
     up "/etc/openvpn/ifup.up"
     EOF
