@@ -127,7 +127,7 @@ class BaseExteriorProtocol(asyncio.Protocol, metaclass=ABCMeta):
         self.pipe_context.close()
 
 
-class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
+class InitiatorExteriorTCPProtocol(BaseExteriorProtocol):
     def __init__(
         self,
         pipe_context: PipeContext,
@@ -176,7 +176,7 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
         self.pipe_context.write_to_interior(data)
 
 
-class ResponderExteriorTcpProtocol(BaseExteriorProtocol):
+class ResponderExteriorTCPProtocol(BaseExteriorProtocol):
     def __init__(self, pipe_context: PipeContext) -> None:
         super().__init__(pipe_context)
         self.negotiation_intention: Optional[NegotiationIntentionModel] = None

@@ -19,7 +19,7 @@ from agile_mesh_network.negotiator.layers.openvpn import (
     BaseOpenvpnProcessManager, OpenvpnProcessProtocol
 )
 from agile_mesh_network.negotiator_main import (
-    RPCResponder, TcpExteriorServer, TunnelsState
+    RPCResponder, TCPExteriorServer, TunnelsState
 )
 
 logger = getLogger(__name__)
@@ -194,7 +194,7 @@ class IntegrationTestCase(TestCase):
                     RPCResponder(tunnels_state_b, os.path.join(self.temp_dir, "b.sock"))
                 )
                 tcp_server_b = await stack.enter_async_context(
-                    TcpExteriorServer(tunnels_state_b)
+                    TCPExteriorServer(tunnels_state_b)
                 )
                 rpc_a_c = await stack.enter_async_context(
                     RPCUnixClient(

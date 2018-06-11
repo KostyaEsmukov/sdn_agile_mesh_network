@@ -212,7 +212,7 @@ class RPCResponder:
                 )
 
 
-class TcpExteriorServerProtocol(asyncio.Protocol):
+class TCPExteriorServerProtocol(asyncio.Protocol):
     def __init__(self, protocol_factory):
         try:
             self.protocol: asyncio.Protocol = protocol_factory()
@@ -230,7 +230,7 @@ class TcpExteriorServerProtocol(asyncio.Protocol):
         self.protocol.connection_lost(exc)
 
 
-class TcpExteriorServer:
+class TCPExteriorServer:
     def __init__(
         self,
         tunnels_state: TunnelsState,
@@ -244,7 +244,7 @@ class TcpExteriorServer:
         self._tunnels_state = tunnels_state
 
     def __str__(self):
-        return f"TcpExteriorServer server at {self.tcp_host}:{self.tcp_port}"
+        return f"TCPExteriorServer server at {self.tcp_host}:{self.tcp_port}"
 
     async def __aenter__(self):
         logger.info(f"Starting {self}")
@@ -258,7 +258,7 @@ class TcpExteriorServer:
     async def start_server(self):
         loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
         self.server = await loop.create_server(
-            lambda: TcpExteriorServerProtocol(
+            lambda: TCPExteriorServerProtocol(
                 self._tunnels_state.create_tunnel_from_protocol
             ),
             self.tcp_host,
@@ -279,7 +279,7 @@ async def main_async_exit_stack(*, tcp_port, socket_path):
     await stack.enter_async_context(
         RPCResponder(tunnels_state, socket_path=socket_path)
     )
-    await stack.enter_async_context(TcpExteriorServer(tunnels_state, tcp_port=tcp_port))
+    await stack.enter_async_context(TCPExteriorServer(tunnels_state, tcp_port=tcp_port))
     return stack
 
 

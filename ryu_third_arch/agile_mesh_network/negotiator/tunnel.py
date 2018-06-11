@@ -9,7 +9,7 @@ from agile_mesh_network.common.models import (
 from agile_mesh_network.common.types import MACAddress
 from agile_mesh_network.negotiator.layers import ProcessManager
 from agile_mesh_network.negotiator.tunnel_protocols import (
-    InitiatorExteriorTcpProtocol, PipeContext, ResponderExteriorTcpProtocol
+    InitiatorExteriorTCPProtocol, PipeContext, ResponderExteriorTCPProtocol
 )
 
 
@@ -151,7 +151,7 @@ class PendingTunnel(Generic[T], metaclass=ABCMeta):
         cls
     ) -> Tuple[asyncio.Protocol, Awaitable["PendingTunnel"]]:
         pipe_context = PipeContext()
-        protocol = ResponderExteriorTcpProtocol(pipe_context)
+        protocol = ResponderExteriorTCPProtocol(pipe_context)
         return protocol, _ResponderPendingTunnel.negotiate(protocol)
 
     def __init__(self, tunnel_intention: TunnelIntention, layers: T) -> None:
@@ -179,7 +179,7 @@ class _InitiatorPendingTunnel(PendingTunnel):
         host, port = self._layers.dest
         pipe_context = PipeContext()
         neg = self.tunnel_intention.to_negotiation_intention(self._layers.layers)
-        ext_prot = InitiatorExteriorTcpProtocol(pipe_context, neg)
+        ext_prot = InitiatorExteriorTCPProtocol(pipe_context, neg)
         with pipe_context:
             await loop.create_connection(lambda: ext_prot, host, port)
             await ext_prot.fut_negotiated
@@ -199,13 +199,13 @@ class _ResponderPendingTunnel(PendingTunnel):
         self,
         tunnel_intention: TunnelIntention,
         layers: LayersDescriptionModel,
-        protocol: ResponderExteriorTcpProtocol,
+        protocol: ResponderExteriorTCPProtocol,
     ) -> None:
         super().__init__(tunnel_intention, layers)
         self._protocol = protocol
 
     @classmethod
-    async def negotiate(cls, protocol: ResponderExteriorTcpProtocol) -> PendingTunnel:
+    async def negotiate(cls, protocol: ResponderExteriorTCPProtocol) -> PendingTunnel:
         with protocol.pipe_context:
             await protocol.fut_intention_read
             assert protocol.negotiation_intention
