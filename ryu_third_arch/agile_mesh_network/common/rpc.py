@@ -16,7 +16,6 @@ logger = getLogger(__name__)
 
 
 class BaseRpcMessage(metaclass=ABCMeta):
-
     def __init__(self, name, kwargs):
         self.name = name
         self.kwargs = kwargs
@@ -37,7 +36,6 @@ class BaseRpcMessage(metaclass=ABCMeta):
 
 
 class RpcCommand(BaseRpcMessage):
-
     def __init__(self, name, kwargs, transport, msg_id):
         super().__init__(name, kwargs)
         self._msg_id = msg_id
@@ -60,7 +58,6 @@ class RpcBroadcast(BaseRpcMessage):
 
 
 class RpcSession:
-
     def __init__(self):
         self.transport = None
         self.msg_id = 0
@@ -187,7 +184,6 @@ class BaseRpcProtocol(asyncio.Protocol, metaclass=ABCMeta):
 
 
 class ClientRpcProtocol(BaseRpcProtocol):
-
     def __init__(self, command_cb, close_cb):
         super().__init__(command_cb)
         self.close_cb = close_cb
@@ -198,7 +194,6 @@ class ClientRpcProtocol(BaseRpcProtocol):
 
 
 class ServerRpcProtocol(BaseRpcProtocol):
-
     def __init__(self, sessions, command_cb):
         super().__init__(command_cb)
         self.sessions = sessions
@@ -214,7 +209,6 @@ class ServerRpcProtocol(BaseRpcProtocol):
 
 
 class RpcUnixServer:
-
     def __init__(self, unix_sock_path, command_cb):
         self.server = None
         self.unix_sock_path = unix_sock_path
@@ -243,7 +237,6 @@ class RpcUnixServer:
 
 
 class RpcUnixClient:
-
     def __init__(self, unix_sock_path, command_cb):
         self.unix_sock_path = unix_sock_path
         self.command_cb = command_cb

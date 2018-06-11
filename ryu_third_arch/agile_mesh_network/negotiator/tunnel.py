@@ -14,7 +14,6 @@ from agile_mesh_network.negotiator.tunnel_protocols import (
 
 
 class BaseTunnel(metaclass=ABCMeta):
-
     def __init__(
         self, src_mac: MACAddress, dst_mac: MACAddress, layers: LayersList
     ) -> None:
@@ -67,7 +66,6 @@ class BaseTunnel(metaclass=ABCMeta):
 
 
 class TunnelIntention(BaseTunnel):
-
     @property
     def is_dead(self):
         # Mimic the Tunnel. TunnelIntention means that there's
@@ -109,7 +107,6 @@ class TunnelIntention(BaseTunnel):
 
 
 class Tunnel(BaseTunnel):
-
     def __init__(
         self, tunnel_intention: TunnelIntention, process_manager: ProcessManager
     ) -> None:
@@ -134,7 +131,6 @@ T = TypeVar("T", bound=LayersDescriptionModel)
 
 
 class PendingTunnel(Generic[T], metaclass=ABCMeta):
-
     @classmethod
     def tunnel_intention_for_initiator(
         cls,
@@ -166,7 +162,6 @@ class PendingTunnel(Generic[T], metaclass=ABCMeta):
 
 
 class _InitiatorPendingTunnel(PendingTunnel):
-
     def __init__(
         self,
         tunnel_intention: TunnelIntention,
@@ -198,7 +193,6 @@ class _InitiatorPendingTunnel(PendingTunnel):
 
 
 class _ResponderPendingTunnel(PendingTunnel):
-
     def __init__(
         self,
         tunnel_intention: TunnelIntention,

@@ -16,7 +16,6 @@ logger = getLogger(__name__)
 
 
 class RemoteDatabase(metaclass=ABCMeta):
-
     @abstractmethod
     async def get_database(self) -> Iterable[SwitchEntity]:
         pass
@@ -27,7 +26,6 @@ class RemoteDatabase(metaclass=ABCMeta):
 
 
 class MongoRemoteDatabase(RemoteDatabase):
-
     def __init__(self, *, loop=None):
         self._loop = loop or asyncio.get_event_loop()
         self._executor = ThreadPoolExecutor(max_workers=1)

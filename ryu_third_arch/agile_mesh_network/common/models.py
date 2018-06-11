@@ -22,7 +22,6 @@ class AsDictMixin:
 
 
 class FromDictMixin:
-
     @classmethod
     def from_dict(cls, kwargs):
         """Like cls(**kwargs), but silently skips unknown arguments.

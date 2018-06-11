@@ -90,7 +90,6 @@ class BaseSocatProcessManager(ProcessManager, metaclass=ABCMeta):
 
 
 class SocatResponderProcessManager(BaseSocatProcessManager):
-
     async def start(self, timeout=None):
         self._local_port = get_free_local_tcp_port()
         await self._start_socat_process(self._build_process_args())
@@ -111,7 +110,6 @@ class SocatResponderProcessManager(BaseSocatProcessManager):
 
 
 class SocatInitiatorProcessManager(BaseSocatProcessManager):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._local_port = None
@@ -131,6 +129,5 @@ class SocatInitiatorProcessManager(BaseSocatProcessManager):
 
 
 class SocatProcessProtocol(BaseProcessProtocol):
-
     def is_tunnel_ready(self, data):
         return b"starting data transfer loop" in data

@@ -9,7 +9,6 @@ from agile_mesh_network.ryu.events_scheduler import RyuAppEventLoopScheduler
 
 
 class RyuAppEventLoopSchedulerTestCase(unittest.TestCase):
-
     def test(self):
         sync = threading.Event()
         ryu_app = DummyRyuApp()
@@ -33,7 +32,6 @@ class RyuAppEventLoopSchedulerTestCase(unittest.TestCase):
 
 
 class DummyEvent(EventBase):
-
     def __init__(self, i):
         self.i = i
 

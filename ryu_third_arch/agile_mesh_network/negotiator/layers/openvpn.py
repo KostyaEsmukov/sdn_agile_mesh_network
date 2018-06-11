@@ -110,7 +110,6 @@ class BaseOpenvpnProcessManager(ProcessManager, metaclass=ABCMeta):
 
 
 class OpenvpnResponderProcessManager(BaseOpenvpnProcessManager):
-
     async def start(self, timeout=None):
         self._local_port = get_free_local_tcp_port()
         await self._start_openvpn_process(self._build_process_args())
@@ -143,7 +142,6 @@ class OpenvpnResponderProcessManager(BaseOpenvpnProcessManager):
 
 
 class OpenvpnInitiatorProcessManager(BaseOpenvpnProcessManager):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._local_port = None
@@ -174,7 +172,6 @@ class OpenvpnInitiatorProcessManager(BaseOpenvpnProcessManager):
 
 
 class OpenvpnProcessProtocol(BaseProcessProtocol):
-
     def is_tunnel_ready(self, data):
         on_client = b"Initialization Sequence Completed"
         on_server = b"[client] Peer Connection Initiated"

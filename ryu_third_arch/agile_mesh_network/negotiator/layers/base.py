@@ -42,7 +42,6 @@ def get_layers_managers(
 
 
 class ProcessManager(metaclass=ABCMeta):
-
     @staticmethod
     def from_layers_responder(
         dst_mac: MACAddress,
@@ -160,7 +159,6 @@ def single_connection_factory(protocol):
 
 
 class InteriorProtocol(asyncio.Protocol):
-
     def __init__(self, pipe_context: PipeContext) -> None:
         self.transport = None
         self.pipe_context = pipe_context
@@ -184,7 +182,6 @@ class InteriorProtocol(asyncio.Protocol):
 
 
 class BaseProcessProtocol(asyncio.SubprocessProtocol, metaclass=ABCMeta):
-
     def __init__(self, pipe_context: PipeContext) -> None:
         self.transport = None
         self.pipe_context = pipe_context

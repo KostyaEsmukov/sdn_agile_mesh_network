@@ -14,7 +14,6 @@ logger = getLogger(__name__)
 
 
 class PipeContext:
-
     def __init__(self):
         self._closing_set = set()
         self.exterior_transport = None
@@ -89,7 +88,6 @@ class PipeContext:
 
 
 class NegotiationMessages:
-
     @classmethod
     def compose_negotiation(
         cls, negotiation_intention: NegotiationIntentionModel
@@ -115,7 +113,6 @@ class NegotiationMessages:
 
 
 class BaseExteriorProtocol(asyncio.Protocol, metaclass=ABCMeta):
-
     def __init__(self, pipe_context: PipeContext) -> None:
         self.interior_transport = None
         self._enc_reader = EncryptedNewlineReader()
@@ -131,7 +128,6 @@ class BaseExteriorProtocol(asyncio.Protocol, metaclass=ABCMeta):
 
 
 class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
-
     def __init__(
         self,
         pipe_context: PipeContext,
@@ -181,7 +177,6 @@ class InitiatorExteriorTcpProtocol(BaseExteriorProtocol):
 
 
 class ResponderExteriorTcpProtocol(BaseExteriorProtocol):
-
     def __init__(self, pipe_context: PipeContext) -> None:
         super().__init__(pipe_context)
         self.negotiation_intention: Optional[NegotiationIntentionModel] = None

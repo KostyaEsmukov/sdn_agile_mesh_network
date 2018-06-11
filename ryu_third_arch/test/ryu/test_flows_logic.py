@@ -24,7 +24,6 @@ from test.data import (
 
 
 class FlowsLogicTestCase(unittest.TestCase):
-
     def setUp(self):
         self._stack = ExitStack()
 

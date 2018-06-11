@@ -14,11 +14,11 @@ RYU_PORT = 6633  # See also ofproto_v1_4.OFP_TCP_PORT
 
 class RyuConfMock:
     """Can be used instead of ryu_app.CONF."""
+
     ovsdb_timeout = 2
 
 
 def _synchronized(f):
-
     @wraps(f)
     def ff(self, *args, **kwargs):
         with self._lock:

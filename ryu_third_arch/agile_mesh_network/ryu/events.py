@@ -6,7 +6,6 @@ from agile_mesh_network.common.models import SwitchEntity, TunnelModel
 
 
 class EventActiveTunnelsList(EventBase):
-
     def __init__(
         self, mac_to_tunswitch: Mapping[str, Tuple[TunnelModel, SwitchEntity]]
     ) -> None:

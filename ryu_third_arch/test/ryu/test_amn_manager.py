@@ -100,7 +100,6 @@ class ManagerTestCase(unittest.TestCase):
         self.server.stop()
 
     def test_topology_database_sync(self):
-
         async def f():
             async with AgileMeshNetworkManager(
                 ryu_ev_loop_scheduler=self.ryu_ev_loop_scheduler
@@ -145,7 +144,6 @@ class ManagerTestCase(unittest.TestCase):
         self.loop.run_until_complete(asyncio.wait_for(f(), timeout=3))
 
     def test_rpc(self):
-
         async def f():
             rpc_responses = iter(
                 [
@@ -236,7 +234,6 @@ class ManagerTestCase(unittest.TestCase):
         self.loop.run_until_complete(asyncio.wait_for(f(), timeout=3))
 
     def test_flows(self):
-
         async def f():
             async with AgileMeshNetworkManager(
                 ryu_ev_loop_scheduler=self.ryu_ev_loop_scheduler
@@ -251,7 +248,6 @@ class ManagerTestCase(unittest.TestCase):
 
 
 class DummyOVSManager:
-
     def __init__(self, *args, **kwargs):
         self.bridge_mac = LOCAL_MAC
 

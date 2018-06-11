@@ -174,7 +174,6 @@ class IntegrationTestCase(TestCase):
         rpc_commands_b = []
 
         def command_cb_factory(commands_container):
-
             async def command_cb(session, msg):
                 commands_container.append(msg)
 

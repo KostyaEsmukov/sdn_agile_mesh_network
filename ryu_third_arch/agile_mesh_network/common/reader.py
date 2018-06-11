@@ -1,9 +1,9 @@
-from agile_mesh_network import settings
 from cryptography.fernet import Fernet, MultiFernet
+
+from agile_mesh_network import settings
 
 
 class NewlineReader:
-
     def __init__(self):
         self.buf = b""
 
@@ -21,7 +21,6 @@ class NewlineReader:
 
 
 class EncryptedNewlineReader(NewlineReader):
-
     def __init__(self, fernet_keys=None):
         super().__init__()
         fernet_keys = fernet_keys or settings.LAYERS_MANAGER_BALANCER_FERNET_KEYS

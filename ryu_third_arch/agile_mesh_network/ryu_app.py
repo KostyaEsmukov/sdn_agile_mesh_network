@@ -21,7 +21,6 @@ logger = getLogger("amn_ryu_app")
 
 
 class AgileMeshNetworkManagerThread(TunnelIntentionsProvider):
-
     def __init__(self, **amn_kwargs):
         self._manager = None
         self._thread = None

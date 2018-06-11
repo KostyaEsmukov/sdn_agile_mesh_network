@@ -28,7 +28,6 @@ NEGOTIATION_INTENTION_DATA = {
 
 
 class ModelsTestCases(TestCase):
-
     def test_tunnel(self):
         mod = TunnelModel(**TUNNEL_DATA)
 

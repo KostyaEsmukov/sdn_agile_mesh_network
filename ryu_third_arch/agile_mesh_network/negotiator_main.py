@@ -213,7 +213,6 @@ class RpcResponder:
 
 
 class TcpExteriorServerProtocol(asyncio.Protocol):
-
     def __init__(self, protocol_factory):
         try:
             self.protocol: asyncio.Protocol = protocol_factory()
@@ -232,7 +231,6 @@ class TcpExteriorServerProtocol(asyncio.Protocol):
 
 
 class TcpExteriorServer:
-
     def __init__(
         self,
         tunnels_state: TunnelsState,
