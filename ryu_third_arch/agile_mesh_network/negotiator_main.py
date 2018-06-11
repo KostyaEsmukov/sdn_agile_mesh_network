@@ -11,8 +11,8 @@ from typing import Awaitable, Callable, Dict, Optional, Sequence
 import click
 from async_exit_stack import AsyncExitStack
 
-from agile_mesh_network.common.models import LayersDescriptionRpcModel, TunnelModel
-from agile_mesh_network.common.rpc import RpcBroadcast, RpcCommand, RpcUnixServer
+from agile_mesh_network.common.models import LayersDescriptionRPCModel, TunnelModel
+from agile_mesh_network.common.rpc import RPCBroadcast, RPCCommand, RPCUnixServer
 from agile_mesh_network.common.types import MACAddress
 from agile_mesh_network.negotiator.layers import openvpn_config
 from agile_mesh_network.negotiator.tunnel import (
@@ -88,7 +88,7 @@ class TunnelsState:
         src_mac: MACAddress,
         dst_mac: MACAddress,
         timeout: float,
-        layers: LayersDescriptionRpcModel,
+        layers: LayersDescriptionRPCModel,
     ) -> TunnelModel:
         pending_tunnel = PendingTunnel.tunnel_intention_for_initiator(
             src_mac, dst_mac, layers, timeout
@@ -129,7 +129,7 @@ class TunnelsState:
         return protocol
 
 
-class RpcResponder:
+class RPCResponder:
     """Provides RPC to the ryu app."""
 
     socket_path = "/var/run/amn_negotiator.sock"
@@ -137,11 +137,11 @@ class RpcResponder:
     def __init__(self, tunnels_state: TunnelsState, socket_path: str = None) -> None:
         if socket_path:
             self.socket_path = socket_path
-        self.rpc_server = RpcUnixServer(self.socket_path, self._handle_command)
+        self.rpc_server = RPCUnixServer(self.socket_path, self._handle_command)
         self._tunnels_state = tunnels_state
 
     def __str__(self):
-        return f"RpcResponder server at {self.socket_path}"
+        return f"RPCResponder server at {self.socket_path}"
 
     async def __aenter__(self):
         logger.info(f"Starting {self}")
@@ -165,8 +165,8 @@ class RpcResponder:
         self._tunnels_state.register_tunnel_destroyed_callback(None)
 
     async def _handle_command(self, session, msg):
-        assert not isinstance(msg, RpcBroadcast)
-        assert isinstance(msg, RpcCommand)
+        assert not isinstance(msg, RPCBroadcast)
+        assert isinstance(msg, RPCCommand)
 
         cmd: Callable[..., Awaitable[Dict]] = getattr(self, f"_command_{msg.name}")
         try:
@@ -184,7 +184,7 @@ class RpcResponder:
         return {"tunnels": tunnels}
 
     async def _command_create_tunnel(self, src_mac, dst_mac, timeout, layers):
-        layers = LayersDescriptionRpcModel(**layers)
+        layers = LayersDescriptionRPCModel(**layers)
         tunnel: TunnelModel = await self._tunnels_state.create_tunnel(
             src_mac, dst_mac, timeout, layers
         )
@@ -277,7 +277,7 @@ async def main_async_exit_stack(*, tcp_port, socket_path):
     stack = AsyncExitStack()
     tunnels_state = await stack.enter_async_context(TunnelsState(loop=loop))
     await stack.enter_async_context(
-        RpcResponder(tunnels_state, socket_path=socket_path)
+        RPCResponder(tunnels_state, socket_path=socket_path)
     )
     await stack.enter_async_context(TcpExteriorServer(tunnels_state, tcp_port=tcp_port))
     return stack
@@ -314,7 +314,7 @@ def stop_loop(loop):
 )
 @click.option(
     "--rpc-unix-sock",
-    default=RpcResponder.socket_path,
+    default=RPCResponder.socket_path,
     show_default=True,
     help="Path of Unix socket to bind for accepting RPC requests.",
 )

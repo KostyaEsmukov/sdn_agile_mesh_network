@@ -3,7 +3,7 @@ from abc import ABCMeta, abstractmethod
 from typing import Awaitable, Generic, Tuple, TypeVar
 
 from agile_mesh_network.common.models import (
-    LayersDescriptionModel, LayersDescriptionRpcModel, LayersList, LayersWithOptions,
+    LayersDescriptionModel, LayersDescriptionRPCModel, LayersList, LayersWithOptions,
     NegotiationIntentionModel, NegotiatorProtocolValue, TunnelModel
 )
 from agile_mesh_network.common.types import MACAddress
@@ -138,7 +138,7 @@ class PendingTunnel(Generic[T], metaclass=ABCMeta):
         cls,
         src_mac: MACAddress,
         dst_mac: MACAddress,
-        layers: LayersDescriptionRpcModel,
+        layers: LayersDescriptionRPCModel,
         timeout: float,
     ) -> "PendingTunnel":
         tunnel_intention = TunnelIntention(
@@ -167,7 +167,7 @@ class _InitiatorPendingTunnel(PendingTunnel):
     def __init__(
         self,
         tunnel_intention: TunnelIntention,
-        layers: LayersDescriptionRpcModel,
+        layers: LayersDescriptionRPCModel,
         timeout: float,
     ) -> None:
         super().__init__(tunnel_intention, layers)

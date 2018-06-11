@@ -15,7 +15,7 @@ logger = getLogger(__name__)
 # asyncio implementations of jsonrpc and 0mq are immature.
 
 
-class BaseRpcMessage(metaclass=ABCMeta):
+class BaseRPCMessage(metaclass=ABCMeta):
     def __init__(self, name, kwargs):
         self.name = name
         self.kwargs = kwargs
@@ -35,7 +35,7 @@ class BaseRpcMessage(metaclass=ABCMeta):
         return not (self == other)
 
 
-class RpcCommand(BaseRpcMessage):
+class RPCCommand(BaseRPCMessage):
     def __init__(self, name, kwargs, transport, msg_id):
         super().__init__(name, kwargs)
         self._msg_id = msg_id
@@ -53,11 +53,11 @@ class RpcCommand(BaseRpcMessage):
         self._msg_id = None
 
 
-class RpcBroadcast(BaseRpcMessage):
+class RPCBroadcast(BaseRPCMessage):
     pass
 
 
-class RpcSession:
+class RPCSession:
     def __init__(self):
         self.transport = None
         self.msg_id = 0
@@ -120,9 +120,9 @@ class RpcSession:
         msg_type, msg_id, name, kwargs_json = line.decode().split(":", 3)
         kwargs = json.loads(kwargs_json)
         if not msg_id:
-            return RpcBroadcast(name, kwargs)
+            return RPCBroadcast(name, kwargs)
         if msg_type == "c":  # incoming command
-            return RpcCommand(name, kwargs, self.transport, msg_id)
+            return RPCCommand(name, kwargs, self.transport, msg_id)
 
         fut = self.msg_id_to_future.pop(msg_id)
         if fut.done():
@@ -145,13 +145,13 @@ class RpcSession:
         raise AssertionError(f"Unknown msg_type {msg_type}")
 
 
-class BaseRpcProtocol(asyncio.Protocol, metaclass=ABCMeta):
+class BaseRPCProtocol(asyncio.Protocol, metaclass=ABCMeta):
     # Must be re-entrable (i.e. the same instance can be used after
     # disconnect).
 
     def __init__(self, command_cb):
         self.transport = None
-        self.session = RpcSession()
+        self.session = RPCSession()
         self.command_cb = command_cb
         self.newline_reader = NewlineReader()
 
@@ -183,7 +183,7 @@ class BaseRpcProtocol(asyncio.Protocol, metaclass=ABCMeta):
         self.transport = None
 
 
-class ClientRpcProtocol(BaseRpcProtocol):
+class ClientRPCProtocol(BaseRPCProtocol):
     def __init__(self, command_cb, close_cb):
         super().__init__(command_cb)
         self.close_cb = close_cb
@@ -193,7 +193,7 @@ class ClientRpcProtocol(BaseRpcProtocol):
         self.close_cb()
 
 
-class ServerRpcProtocol(BaseRpcProtocol):
+class ServerRPCProtocol(BaseRPCProtocol):
     def __init__(self, sessions, command_cb):
         super().__init__(command_cb)
         self.sessions = sessions
@@ -208,7 +208,7 @@ class ServerRpcProtocol(BaseRpcProtocol):
         self.session.close()
 
 
-class RpcUnixServer:
+class RPCUnixServer:
     def __init__(self, unix_sock_path, command_cb):
         self.server = None
         self.unix_sock_path = unix_sock_path
@@ -218,7 +218,7 @@ class RpcUnixServer:
     async def start(self):
         loop = asyncio.get_event_loop()
         self.server = await loop.create_unix_server(
-            lambda: ServerRpcProtocol(self.sessions, self.command_cb),
+            lambda: ServerRPCProtocol(self.sessions, self.command_cb),
             self.unix_sock_path,
         )
 
@@ -236,11 +236,11 @@ class RpcUnixServer:
         await self.close_wait()
 
 
-class RpcUnixClient:
+class RPCUnixClient:
     def __init__(self, unix_sock_path, command_cb):
         self.unix_sock_path = unix_sock_path
         self.command_cb = command_cb
-        self._protocol = ClientRpcProtocol(self.command_cb, self._reconnect_or_close)
+        self._protocol = ClientRPCProtocol(self.command_cb, self._reconnect_or_close)
         self.session = self._protocol.session
         self._reconnect_task = None
 

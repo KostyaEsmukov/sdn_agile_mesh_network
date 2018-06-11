@@ -7,11 +7,11 @@ from async_exit_stack import AsyncExitStack
 
 from agile_mesh_network import settings
 from agile_mesh_network.common.models import (
-    LayersDescriptionRpcModel, NegotiatorProtocolValue, SwitchEntity, TunnelModel
+    LayersDescriptionRPCModel, NegotiatorProtocolValue, SwitchEntity, TunnelModel
 )
 from agile_mesh_network.ryu import events
 from agile_mesh_network.ryu.events_scheduler import RyuAppEventLoopScheduler
-from agile_mesh_network.ryu.negotiator_rpc import NegotiatorRpc
+from agile_mesh_network.ryu.negotiator_rpc import NegotiatorRPC
 from agile_mesh_network.ryu.ovs_manager import OVSManager
 from agile_mesh_network.ryu.topology_database import TopologyDatabase
 
@@ -25,7 +25,7 @@ class AgileMeshNetworkManager:
     def __init__(self, *, ryu_ev_loop_scheduler: RyuAppEventLoopScheduler) -> None:
         self.ryu_ev_loop_scheduler = ryu_ev_loop_scheduler
         self.topology_database = TopologyDatabase()
-        self.negotiator_rpc = NegotiatorRpc(settings.NEGOTIATOR_RPC_UNIX_SOCK_PATH)
+        self.negotiator_rpc = NegotiatorRPC(settings.NEGOTIATOR_RPC_UNIX_SOCK_PATH)
         self.ovs_manager = OVSManager(
             datapath_id=settings.OVS_DATAPATH_ID,
             # TODO ryu_app.CONF?
@@ -174,7 +174,7 @@ class AgileMeshNetworkManager:
         # TODO layers? udp? negotiation?
         tcp = NegotiatorProtocolValue("tcp")
         dest_tcp = switch.layers_config.negotiator[tcp]
-        layers = LayersDescriptionRpcModel.from_dict(
+        layers = LayersDescriptionRPCModel.from_dict(
             {"dest": dest_tcp, "protocol": tcp, "layers": switch.layers_config.layers}
         )
         await self.negotiator_rpc.start_tunnel(

@@ -3,13 +3,13 @@ from typing import Sequence
 
 from async_exit_stack import AsyncExitStack
 
-from agile_mesh_network.common.models import LayersDescriptionRpcModel, TunnelModel
-from agile_mesh_network.common.rpc import RpcBroadcast, RpcUnixClient
+from agile_mesh_network.common.models import LayersDescriptionRPCModel, TunnelModel
+from agile_mesh_network.common.rpc import RPCBroadcast, RPCUnixClient
 
 logger = getLogger(__name__)
 
 
-class NegotiatorRpc:
+class NegotiatorRPC:
     # Execution context: run entirely in the asyncio event loop,
     # no thread safety is required.
 
@@ -31,12 +31,12 @@ class NegotiatorRpc:
     async def _get_session(self):
         if not self._rpc:
             self._rpc = await self._stack.enter_async_context(
-                RpcUnixClient(self.unix_sock_path, self._rpc_command_handler)
+                RPCUnixClient(self.unix_sock_path, self._rpc_command_handler)
             )
         return self._rpc.session
 
     async def start_tunnel(
-        self, src_mac, dst_mac, timeout, layers: LayersDescriptionRpcModel
+        self, src_mac, dst_mac, timeout, layers: LayersDescriptionRPCModel
     ) -> None:
         session = await self._get_session()
         msg = await session.issue_command(
@@ -58,7 +58,7 @@ class NegotiatorRpc:
         self._call_callbacks("dump_tunnels_state", msg)
         return [TunnelModel.from_dict(d) for d in msg["tunnels"]]
 
-    async def _rpc_command_handler(self, session, cmd: RpcBroadcast):
+    async def _rpc_command_handler(self, session, cmd: RPCBroadcast):
         if cmd.name not in ("tunnel_created", "tunnel_destroyed"):
             logger.error(
                 "Ignoring RPC broadcast with an unknown topic_name: %s", cmd.name

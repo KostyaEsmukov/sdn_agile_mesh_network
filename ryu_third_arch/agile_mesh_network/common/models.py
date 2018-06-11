@@ -64,7 +64,7 @@ class LayersDescriptionModel(AsDictMixin):
 
 
 @dataclass
-class LayersDescriptionRpcModel(LayersDescriptionModel, AsDictMixin, FromDictMixin):
+class LayersDescriptionRPCModel(LayersDescriptionModel, AsDictMixin, FromDictMixin):
     dest: DestHost
 
 

@@ -13,7 +13,7 @@ from ryu.controller.controller import Datapath
 
 from agile_mesh_network import settings
 from agile_mesh_network.common.models import SwitchEntity, TunnelModel
-from agile_mesh_network.common.rpc import RpcCommand, RpcUnixServer
+from agile_mesh_network.common.rpc import RPCCommand, RPCUnixServer
 from agile_mesh_network.ryu import events_scheduler
 from agile_mesh_network.ryu.amn_manager import AgileMeshNetworkManager
 from test.data import (
@@ -78,16 +78,16 @@ class ManagerTestCase(unittest.TestCase):
         self._stack.enter_context(self.ryu_ev_loop_scheduler)
 
         async def command_cb(session, msg):
-            assert isinstance(msg, RpcCommand)
+            assert isinstance(msg, RPCCommand)
             await self._rpc_command_cb(msg)
 
         self.rpc_server = self.loop.run_until_complete(
             self._stack.enter_async_context(
-                RpcUnixServer(self.rpc_unix_sock, command_cb)
+                RPCUnixServer(self.rpc_unix_sock, command_cb)
             )
         )
 
-    async def _rpc_command_cb(self, msg: RpcCommand):
+    async def _rpc_command_cb(self, msg: RPCCommand):
         self.assertEqual(msg.name, "dump_tunnels_state")
         await msg.respond({"tunnels": []})
 
@@ -168,7 +168,7 @@ class ManagerTestCase(unittest.TestCase):
                 ]
             )
 
-            async def _rpc_command_cb(msg: RpcCommand):
+            async def _rpc_command_cb(msg: RPCCommand):
                 name, resp = next(rpc_responses)
                 self.assertEqual(msg.name, name)
                 await msg.respond(resp)

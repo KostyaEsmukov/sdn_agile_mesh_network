@@ -2,7 +2,7 @@ import json
 from unittest import TestCase
 
 from agile_mesh_network.common.models import (
-    LayersDescriptionModel, LayersDescriptionRpcModel, NegotiationIntentionModel,
+    LayersDescriptionModel, LayersDescriptionRPCModel, NegotiationIntentionModel,
     TunnelModel
 )
 
@@ -54,7 +54,7 @@ class ModelsTestCases(TestCase):
         json.dumps(data)  # must be serializable
 
     def test_layers_rpc(self):
-        mod = LayersDescriptionRpcModel(**LAYERS_DESCRIPTION_DATA)
+        mod = LayersDescriptionRPCModel(**LAYERS_DESCRIPTION_DATA)
 
         self.assertEqual(mod.protocol, LAYERS_DESCRIPTION_DATA["protocol"])
         with self.assertRaises(TypeError):

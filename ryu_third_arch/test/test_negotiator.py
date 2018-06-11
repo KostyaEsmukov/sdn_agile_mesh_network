@@ -10,8 +10,8 @@ from unittest.mock import patch
 from async_exit_stack import AsyncExitStack
 
 from agile_mesh_network.common import timeout_backoff
-from agile_mesh_network.common.models import LayersDescriptionRpcModel
-from agile_mesh_network.common.rpc import RpcBroadcast, RpcUnixClient
+from agile_mesh_network.common.models import LayersDescriptionRPCModel
+from agile_mesh_network.common.rpc import RPCBroadcast, RPCUnixClient
 from agile_mesh_network.negotiator.layers import (
     OpenvpnInitiatorProcessManager, OpenvpnResponderProcessManager
 )
@@ -19,7 +19,7 @@ from agile_mesh_network.negotiator.layers.openvpn import (
     BaseOpenvpnProcessManager, OpenvpnProcessProtocol
 )
 from agile_mesh_network.negotiator_main import (
-    RpcResponder, TcpExteriorServer, TunnelsState
+    RPCResponder, TcpExteriorServer, TunnelsState
 )
 
 logger = getLogger(__name__)
@@ -73,10 +73,10 @@ class IntegrationTestCase(TestCase):
             async with AsyncExitStack() as stack:
                 tunnels_state = await stack.enter_async_context(TunnelsState(loop=loop))
                 await stack.enter_async_context(
-                    RpcResponder(tunnels_state, rpc_sock_path)
+                    RPCResponder(tunnels_state, rpc_sock_path)
                 )
                 rpc_c = await stack.enter_async_context(
-                    RpcUnixClient(rpc_sock_path, command_cb)
+                    RPCUnixClient(rpc_sock_path, command_cb)
                 )
 
                 rpc = rpc_c.session
@@ -104,8 +104,8 @@ class IntegrationTestCase(TestCase):
                     patch.object(timeout_backoff, "_sleep", _mock_sleep)
                 )
 
-                async with RpcResponder(tunnels_state, rpc_sock_path):
-                    rpc_c = RpcUnixClient(rpc_sock_path, command_cb)
+                async with RPCResponder(tunnels_state, rpc_sock_path):
+                    rpc_c = RPCUnixClient(rpc_sock_path, command_cb)
                     await rpc_c.start()
 
                     rpc = rpc_c.session
@@ -124,7 +124,7 @@ class IntegrationTestCase(TestCase):
                 await asyncio.sleep(0.001)
 
                 # Bring back the server, ensure that the session is working.
-                async with RpcResponder(tunnels_state, rpc_sock_path):
+                async with RPCResponder(tunnels_state, rpc_sock_path):
                     backoff_semaphore.release()  # Trigger reconnect
                     await rpc_c._reconnect_task
                     resp = await rpc.issue_command("dump_tunnels_state")
@@ -188,22 +188,22 @@ class IntegrationTestCase(TestCase):
                     TunnelsState(loop=loop)
                 )
                 await stack.enter_async_context(
-                    RpcResponder(tunnels_state_a, os.path.join(self.temp_dir, "a.sock"))
+                    RPCResponder(tunnels_state_a, os.path.join(self.temp_dir, "a.sock"))
                 )
                 await stack.enter_async_context(
-                    RpcResponder(tunnels_state_b, os.path.join(self.temp_dir, "b.sock"))
+                    RPCResponder(tunnels_state_b, os.path.join(self.temp_dir, "b.sock"))
                 )
                 tcp_server_b = await stack.enter_async_context(
                     TcpExteriorServer(tunnels_state_b)
                 )
                 rpc_a_c = await stack.enter_async_context(
-                    RpcUnixClient(
+                    RPCUnixClient(
                         os.path.join(self.temp_dir, "a.sock"),
                         command_cb_factory(rpc_commands_a),
                     )
                 )
                 rpc_b_c = await stack.enter_async_context(
-                    RpcUnixClient(
+                    RPCUnixClient(
                         os.path.join(self.temp_dir, "b.sock"),
                         command_cb_factory(rpc_commands_b),
                     )
@@ -223,7 +223,7 @@ class IntegrationTestCase(TestCase):
                             "src_mac": mac_a,
                             "dst_mac": mac_b,
                             "timeout": 5,
-                            "layers": LayersDescriptionRpcModel(
+                            "layers": LayersDescriptionRPCModel(
                                 protocol="tcp",
                                 dest=("127.0.0.1", tcp_server_b.tcp_port),
                                 layers={"openvpn": {"mock": True}},
@@ -271,7 +271,7 @@ class IntegrationTestCase(TestCase):
                 self.assertListEqual(
                     rpc_commands_a,
                     [
-                        RpcBroadcast(
+                        RPCBroadcast(
                             name="tunnel_created",
                             kwargs={
                                 "tunnel": tunnel_data_a,
@@ -283,7 +283,7 @@ class IntegrationTestCase(TestCase):
                 self.assertListEqual(
                     rpc_commands_b,
                     [
-                        RpcBroadcast(
+                        RPCBroadcast(
                             name="tunnel_created",
                             kwargs={
                                 "tunnel": tunnel_data_b,
@@ -320,7 +320,7 @@ class IntegrationTestCase(TestCase):
                 self.assertListEqual(
                     rpc_commands_a,
                     [
-                        RpcBroadcast(
+                        RPCBroadcast(
                             name="tunnel_destroyed",
                             kwargs={"tunnel": tunnel_data_a, "tunnels": []},
                         )
@@ -329,7 +329,7 @@ class IntegrationTestCase(TestCase):
                 self.assertListEqual(
                     rpc_commands_b,
                     [
-                        RpcBroadcast(
+                        RPCBroadcast(
                             name="tunnel_destroyed",
                             kwargs={"tunnel": tunnel_data_b, "tunnels": []},
                         )
