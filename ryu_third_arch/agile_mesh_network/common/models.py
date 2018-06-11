@@ -1,9 +1,10 @@
 import base64
 import inspect
 import os
+from enum import Enum
 from typing import Any, Mapping, NewType, Sequence, Tuple
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
 
 from .types import MACAddress
 
@@ -15,6 +16,15 @@ def random_string():
 
 LayersList = NewType("LayersList", Sequence[str])
 LayersWithOptions = NewType("LayersWithOptions", Mapping[str, Any])
+DestHost = NewType("DestHost", Tuple[str, int])  # hostname, port.
+
+
+class NegotiatorProtocol(Enum):
+    TCP = "tcp"
+    # TODO: udp, ws, wss, tcps, ...
+
+
+NegotiatorProtocolValue = NewType("NegotiatorProtocolValue", str)  # value of the Enum.
 
 
 class AsDictMixin:
@@ -29,6 +39,12 @@ class FromDictMixin:
         extra = set(kwargs) - set(inspect.signature(cls.__init__).parameters.keys())
         for key in extra:
             kwargs.pop(key)
+        for f in fields(cls):
+            if f.name not in kwargs:
+                continue
+            if is_dataclass(f.type) and not is_dataclass(kwargs[f.name]):
+                assert issubclass(f.type, FromDictMixin)
+                kwargs[f.name] = f.type.from_dict(kwargs[f.name])
         return cls(**kwargs)
 
 
@@ -43,13 +59,13 @@ class TunnelModel(AsDictMixin, FromDictMixin):
 
 @dataclass
 class LayersDescriptionModel(AsDictMixin):
-    protocol: str
+    protocol: NegotiatorProtocolValue
     layers: LayersWithOptions
 
 
 @dataclass
 class LayersDescriptionRpcModel(LayersDescriptionModel, AsDictMixin, FromDictMixin):
-    dest: Tuple[str, int]  # ip, port.
+    dest: DestHost
 
 
 @dataclass
@@ -63,9 +79,15 @@ class NegotiationIntentionModel(AsDictMixin):
 
 
 @dataclass
+class NegotiatorLayersConfig(FromDictMixin):
+    negotiator: Mapping[NegotiatorProtocolValue, DestHost]
+    layers: LayersWithOptions
+
+
+@dataclass
 class SwitchEntity(FromDictMixin):
     hostname: str
     is_relay: bool
     mac: MACAddress
-    layers_config: Any  # TODO model. LayersDescriptionRpcModel?
+    layers_config: NegotiatorLayersConfig
     # TODO allow switches to dynamically set their own IP addresses.

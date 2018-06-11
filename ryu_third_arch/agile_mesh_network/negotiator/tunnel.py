@@ -4,7 +4,7 @@ from typing import Awaitable, Generic, Tuple, TypeVar
 
 from agile_mesh_network.common.models import (
     LayersDescriptionModel, LayersDescriptionRpcModel, LayersList, LayersWithOptions,
-    NegotiationIntentionModel, TunnelModel
+    NegotiationIntentionModel, NegotiatorProtocolValue, TunnelModel
 )
 from agile_mesh_network.common.types import MACAddress
 from agile_mesh_network.negotiator.layers import ProcessManager
@@ -89,7 +89,9 @@ class TunnelIntention(BaseTunnel):
 
     @classmethod
     def from_negotiation_intention(
-        cls, negotiation_intention: NegotiationIntentionModel, protocol: str
+        cls,
+        negotiation_intention: NegotiationIntentionModel,
+        protocol: NegotiatorProtocolValue,
     ) -> Tuple["TunnelIntention", LayersDescriptionModel]:
         # src_mac of negotiation represents the MAC address of the initiator.
         # When converting negotiation to a tunnel (on responder side),

@@ -7,7 +7,7 @@ from async_exit_stack import AsyncExitStack
 
 from agile_mesh_network import settings
 from agile_mesh_network.common.models import (
-    LayersDescriptionRpcModel, SwitchEntity, TunnelModel
+    LayersDescriptionRpcModel, NegotiatorProtocolValue, SwitchEntity, TunnelModel
 )
 from agile_mesh_network.ryu import events
 from agile_mesh_network.ryu.events_scheduler import RyuAppEventLoopScheduler
@@ -172,7 +172,11 @@ class AgileMeshNetworkManager:
 
     async def connect_switch(self, switch: SwitchEntity):
         # TODO layers? udp? negotiation?
-        layers = LayersDescriptionRpcModel.from_dict(switch.layers_config)
+        tcp = NegotiatorProtocolValue("tcp")
+        dest_tcp = switch.layers_config.negotiator[tcp]
+        layers = LayersDescriptionRpcModel.from_dict(
+            {"dest": dest_tcp, "protocol": tcp, "layers": switch.layers_config.layers}
+        )
         await self.negotiator_rpc.start_tunnel(
             src_mac=self.ovs_manager.bridge_mac,
             dst_mac=switch.mac,

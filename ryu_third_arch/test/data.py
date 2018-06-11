@@ -7,8 +7,9 @@ SWITCH_ENTITY_RELAY_DATA = {
     "is_relay": True,
     "mac": LOCAL_MAC,
     "layers_config": {
-        "dest": ["192.0.2.0", 65000],
-        "protocol": "tcp",
+        "negotiator": {
+          "tcp": ["192.0.2.0", 65000],
+        },
         "layers": {"openvpn": {}},
     },
 }
@@ -17,8 +18,9 @@ SWITCH_ENTITY_BOARD_DATA = {
     "is_relay": False,
     "mac": SECOND_MAC,
     "layers_config": {
-        "dest": ["192.0.2.1", 65000],
-        "protocol": "tcp",
+        "negotiator": {
+          "tcp": ["192.0.2.1", 65000],
+        },
         "layers": {"openvpn": {}},
     },
 }

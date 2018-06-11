@@ -113,7 +113,7 @@ class ManagerTestCase(unittest.TestCase):
 
                 self.assertListEqual(
                     topology_database.find_random_relay_switches(),
-                    [SwitchEntity(**SWITCH_ENTITY_RELAY_DATA)],
+                    [SwitchEntity.from_dict(SWITCH_ENTITY_RELAY_DATA)],
                 )
 
                 with self.assertRaises(KeyError):
@@ -123,7 +123,7 @@ class ManagerTestCase(unittest.TestCase):
                     topology_database.find_switch_by_mac(
                         SWITCH_ENTITY_BOARD_DATA["mac"]
                     ),
-                    SwitchEntity(**SWITCH_ENTITY_BOARD_DATA),
+                    SwitchEntity.from_dict(SWITCH_ENTITY_BOARD_DATA),
                 )
 
                 self.assertListEqual(
@@ -136,7 +136,7 @@ class ManagerTestCase(unittest.TestCase):
                     topology_database.find_switches_by_mac_list(
                         [UNK_MAC, SWITCH_ENTITY_BOARD_DATA["mac"]]
                     ),
-                    [SwitchEntity(**SWITCH_ENTITY_BOARD_DATA)],
+                    [SwitchEntity.from_dict(SWITCH_ENTITY_BOARD_DATA)],
                 )
 
                 # TODO after resync extra tunnels/flows are destroyed

@@ -29,8 +29,9 @@ Should be run on a single machine, where the centralized MongoDB instance should
       "is_relay": true,
       "mac": "02:11:22:33:33:01",
       "layers_config": {
-        "dest": ["192.168.56.10", NumberInt(11194)],
-        "protocol": "tcp",
+        "negotiator": {
+          "tcp": ["192.168.56.10", NumberInt(11194)],
+        },
         "layers": {
           "socat": {}
         }
@@ -42,7 +43,7 @@ Should be run on a single machine, where the centralized MongoDB instance should
     db.switch_collection.updateOne(
        { "hostname": "ryucontroller" },
        {
-         $set: { "layers_config.dest": ["192.168.56.10", NumberInt(11194)] },
+         $set: { "layers_config.negotiator": {"tcp": ["192.168.56.10", NumberInt(11194)] } },
          $currentDate: { lastModified: true }
        }
     )
