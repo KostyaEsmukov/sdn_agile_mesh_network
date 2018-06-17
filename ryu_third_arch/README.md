@@ -83,10 +83,21 @@ This package requires Python 3.6.
 
     sudo apt install virtualenv
 
+For raspberry (miniconda for ARM ships Python 3.4):
+
+    apt install libffi-dev
+    apt install -t testing python3.6 python3-setuptools python3-dev
+
+    virtualenv /opt/amn/venv --python `which python3`
+
+For amd64:
+
     wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
     bash Miniconda3-latest-Linux-x86_64.sh -b -p /opt/miniconda
 
     virtualenv /opt/amn/venv --python /opt/miniconda/bin/python3
+
+Both:
 
     . /opt/amn/venv/bin/activate
 
