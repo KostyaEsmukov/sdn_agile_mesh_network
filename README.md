@@ -1,5 +1,61 @@
 # Agile Mesh Network
 
+## Background
+
+This is a bachelor thesis project. It's not supposed to be maintained,
+but the code might be useful for someone:
+- There's an example of asyncio and Ryu application logic 
+  (i.e. OpenFlow messages) testing.
+- There's a solution for running eventlet and asyncio in the same 
+  process (in 2 different threads) while maintaining thread-safe 
+  communications between the two (See also the [gist][gist_eventlet] 
+  showing how eventlet's Queue might be modified from asyncio).
+- Negotiator consists of a bunch of asyncio Protocols, which pipe 
+  to each other (while correctly addressing the initialization phase, 
+  when one end might start writing to the other, which is not yet 
+  connected).
+
+Test coverage is ~80%.
+
+[gist_eventlet]: https://gist.github.com/KostyaEsmukov/55f802a638bbe64c0838f43f7c8c02c4
+
+The thesis topic was:
+> Applying SDN approaches and techniques to the instantiation of
+> virtual private networks for the confidentiality of M2M communications.
+
+The project consists of two modules: `Ryu app` and `Negotiator`. Both
+are supposed to be run together on each IoT Board (also called
+a `Switch` in SDN manner).
+
+System architecture:
+
+![Architecture](./diagrams/arch.svg)
+
+Each Switch initially downloads the Network Topology Database contents,
+and then creates a Tunnel (openvpn or socat tcp-tap tunnel) to a single
+Relay Switch. All broadcast traffic goes through Relay. Unicast traffic
+goes through Relay initially, but after the first packet the Switches
+attempt to instantiate a direct Tunnel. If they succeed, the Ryu app
+adds OpenFlow flows via that tunnel, which makes the Unicast traffic
+go through direct tunnel (instead of Relay).
+
+Network topology (Mesh):
+
+![Topology](./diagrams/topology_mesh.svg)
+
+OpenFlow PACKET_IN handler flowchart:
+
+![PACKET_IN Flowchart](./diagrams/packet_in_flowchart.svg)
+
+Network Topology Database entity:
+
+![Network Topology Database model](./diagrams/topology_database_models.svg)
+
+## Running tests
+
+    pipenv install -d
+    pipenv run testcov
+
 ## Packaging
 
     ./setup.py sdist bdist_wheel
@@ -159,7 +215,6 @@ install it from there.
     user nobody
     group nogroup
     comp-lzo no
-    # txqueuelen 3000
     script-security 2
     up "/etc/openvpn/ifup.up"
     EOF
@@ -175,7 +230,6 @@ install it from there.
     user nobody
     group nogroup
     comp-lzo no
-    # txqueuelen 3000
     script-security 2
     up "/etc/openvpn/ifup.up"
     EOF
